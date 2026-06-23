@@ -11,9 +11,11 @@ front-end-agnostic foundation: HTTP in, events out.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Body, FastAPI, Header, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from app.channel import router as channel_router
 from app.demo import DEMO_QUOTE_ID, ensure_demo_seeded
@@ -31,6 +33,18 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="ACME Mock Motor Quote Platform", lifespan=lifespan)
 app.include_router(channel_router)
+
+# Serve the live operational dashboard (brief §14) same-origin at /dashboard so
+# it can use the SSE/WS channel without CORS. Mounted under a sub-path so it
+# never shadows the API routes. Guarded so the app/tests still load if the
+# dashboard dir is absent. Path: <repo>/platform/app/api.py -> <repo>/dashboard.
+_DASHBOARD_DIR = Path(__file__).resolve().parents[2] / "dashboard"
+if _DASHBOARD_DIR.is_dir():
+    app.mount(
+        "/dashboard",
+        StaticFiles(directory=str(_DASHBOARD_DIR), html=True),
+        name="dashboard",
+    )
 
 
 def record_api_call(name: str, request, response) -> None:

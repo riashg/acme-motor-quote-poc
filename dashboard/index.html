@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ACME Motor Quote — Live Operational Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>ACME Motor Quote — Live Dashboard</h1>
+    <div class="conn">
+      <span id="conn-dot" class="dot dot--off"></span>
+      <span id="conn-text">connecting…</span>
+      <span class="sep">·</span>
+      <span id="event-count">0 events</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab tab--active" data-tab="timeline">Event Timeline</button>
+    <button class="tab" data-tab="sessions">Quote Sessions</button>
+    <button class="tab" data-tab="tools">Tool Activity</button>
+    <button class="tab" data-tab="api">API Activity</button>
+  </nav>
+
+  <main>
+    <section id="panel-timeline" class="panel panel--active">
+      <table class="grid">
+        <thead>
+          <tr><th>seq</th><th>time</th><th>category</th><th>type</th><th>payload</th></tr>
+        </thead>
+        <tbody id="timeline-body"></tbody>
+      </table>
+      <p class="empty" id="timeline-empty">No events yet.</p>
+    </section>
+
+    <section id="panel-sessions" class="panel">
+      <table class="grid">
+        <thead>
+          <tr><th>quoteId</th><th>journeyState / status</th><th>events</th><th>last updated</th></tr>
+        </thead>
+        <tbody id="sessions-body"></tbody>
+      </table>
+      <p class="empty" id="sessions-empty">No quote sessions yet.</p>
+    </section>
+
+    <section id="panel-tools" class="panel">
+      <table class="grid">
+        <thead>
+          <tr><th>seq</th><th>time</th><th>type</th><th>payload</th></tr>
+        </thead>
+        <tbody id="tools-body"></tbody>
+      </table>
+      <p class="empty" id="tools-empty">No tool activity yet.</p>
+    </section>
+
+    <section id="panel-api" class="panel">
+      <table class="grid">
+        <thead>
+          <tr><th>seq</th><th>time</th><th>api</th><th>request</th><th>response</th></tr>
+        </thead>
+        <tbody id="api-body"></tbody>
+      </table>
+      <p class="empty" id="api-empty">No API activity yet.</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
