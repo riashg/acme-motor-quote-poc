@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.agent import collect_turn
@@ -130,3 +132,11 @@ async def confirm(req: ConfirmRequest):
         "handoff_url": link["handoff_url"],
         "guid": link["guid"],
     }
+
+
+# Serve the built frontend (if present) from the same origin, so a single tunnel
+# exposes both the UI and the API with no CORS. Guarded so dev/tests still work
+# when the frontend hasn't been built. Mounted last: the API routes above win.
+_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="ui")
