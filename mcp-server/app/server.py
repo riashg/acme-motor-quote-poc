@@ -71,7 +71,7 @@ def submit_quote_request(country_code: str, data: dict) -> dict:
             "cover_tier": qi.cover_tier.value,
             "voluntary_excess": qi.voluntary_excess,
         }
-    else:  # FR
+    else:  # FR — rates on the bonus-malus coefficient, not derived age
         qi = FrQuoteInput.model_validate(data)
         payload = {
             "identifier": qi.vehicle.identifier,
@@ -89,7 +89,7 @@ def submit_quote_request(country_code: str, data: dict) -> dict:
         annual_premium=annual,
         monthly_premium=round(annual / 12, 2),
         country_code=cc,
-        input=data,
+        input=qi.model_dump(mode="json"),
     )
     return quote.model_dump(mode="json")
 
