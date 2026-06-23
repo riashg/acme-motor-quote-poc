@@ -1,18 +1,26 @@
+"""FastAPI form-filling backend (POC).
+
+Drives the schema-driven form-filling agent and proxies the quote/handoff to a
+QuoteService (the offline FakeQuoteService in MOCK mode, otherwise the live
+MCPQuoteService). The backend never prices anything itself.
+"""
+
+from __future__ import annotations
+
 import json
 import os
-from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app.llm.agent import run_agent_turn
-from app.quoting.engine import price
-from app.quoting.models import CoverTier, QuoteInput
+from app.agent import collect_turn
+from app.extraction import extract_document
+from app.mcp_client import MCPQuoteService
+from app.service import FakeQuoteService
 
-app = FastAPI(title="ACME Motor Quoting POC (mock)")
+app = FastAPI(title="ACME Motor Quote — form-filling backend (POC)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -20,11 +28,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory session store: session_id -> {"history": [...], "state": {...}}
+# In-memory session store: session_id -> session dict.
 sessions: dict[str, dict] = {}
 
 
-def _get_client():
+def _get_service():
+    service = getattr(app.state, "service", None)
+    if service is not None:
+        return service
+    if os.getenv("MOCK_LLM") == "1":
+        return FakeQuoteService()
+    return MCPQuoteService()
+
+
+def _llm_client():
     if os.getenv("MOCK_LLM") == "1":
         return None
     from openai import OpenAI
@@ -32,15 +49,20 @@ def _get_client():
     return OpenAI()
 
 
+def _session(session_id: str) -> dict:
+    return sessions.setdefault(
+        session_id,
+        {"country_code": "GB", "fields": {}, "schema": {}, "history": []},
+    )
+
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
 
 
-class RepriceRequest(BaseModel):
+class ConfirmRequest(BaseModel):
     session_id: str
-    cover_tier: CoverTier | None = None
-    voluntary_excess: int | None = None
 
 
 @app.get("/health")
@@ -49,39 +71,58 @@ def health():
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
-    session = sessions.setdefault(req.session_id, {"history": [], "state": {}})
-    client = _get_client()
+async def chat(req: ChatRequest):
+    session = _session(req.session_id)
+    service = _get_service()
+    client = _llm_client()
 
-    def event_stream():
-        for event in run_agent_turn(req.message, session, client=client):
+    async def event_stream():
+        async for event in collect_turn(req.message, session, service, client=client):
             yield f"data: {json.dumps(event)}\n\n"
-        yield "data: {\"type\": \"done\"}\n\n"
+        yield 'data: {"type": "done"}\n\n'
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/reprice")
-def reprice(req: RepriceRequest):
-    session = sessions.get(req.session_id)
-    if not session or "quote_input" not in session.get("state", {}):
-        raise HTTPException(status_code=404, detail="No quote in session yet.")
-    qi: QuoteInput = session["state"]["quote_input"]
-    updated = qi.model_copy(
-        update={
-            "cover_tier": req.cover_tier or qi.cover_tier,
-            "voluntary_excess": req.voluntary_excess
-            if req.voluntary_excess is not None
-            else qi.voluntary_excess,
-        }
+@app.post("/upload")
+async def upload(session_id: str = Form(...), file: UploadFile = File(...)):
+    session = _session(session_id)
+    service = _get_service()
+
+    file_bytes = await file.read()
+    extracted = extract_document(
+        file_bytes,
+        file.content_type or "application/octet-stream",
+        file.filename or "",
+        client=_llm_client(),
     )
-    session["state"]["quote_input"] = updated
-    return price(updated).model_dump()
+    del file_bytes
+
+    country = extracted["country_code"]
+    fields = {k: v for k, v in extracted["fields"].items() if k != "_source"}
+    session["country_code"] = country
+    session["fields"].update(fields)
+    session["schema"] = await service.get_quote_schema(country)
+
+    return {
+        "country_code": country,
+        "fields": fields,
+        "schema": session["schema"],
+    }
 
 
-# Serve the built frontend (if present) from the same origin, so a single
-# tunnel exposes both UI and API with no CORS. Guarded so tests/dev still work
-# when the frontend hasn't been built yet. Mounted last: API routes win.
-_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
-if _DIST.is_dir():
-    app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="static")
+@app.post("/confirm")
+async def confirm(req: ConfirmRequest):
+    session = sessions.get(req.session_id) or {}
+    candidate = session.get("candidate")
+    if not candidate:
+        raise HTTPException(status_code=409, detail="No candidate to confirm yet.")
+
+    service = _get_service()
+    quote = await service.submit_quote_request(session["country_code"], candidate)
+    link = await service.create_handoff_link(quote)
+    return {
+        "quote": quote,
+        "handoff_url": link["handoff_url"],
+        "guid": link["guid"],
+    }
