@@ -1,4 +1,4 @@
-import type { ChatEvent, CoverTier, Quote } from "./types";
+import type { ChatEvent, ConfirmResult, UploadResult } from "./types";
 
 // Same-origin by default (the backend serves the built UI). In local dev,
 // set VITE_API_BASE=http://localhost:8000 (see .env.development).
@@ -46,15 +46,27 @@ export async function streamChat(
   for (const frame of text.split("\n\n")) emitFrame(frame);
 }
 
-export async function reprice(
+export async function uploadDocument(
   sessionId: string,
-  changes: { cover_tier?: CoverTier; voluntary_excess?: number },
-): Promise<Quote> {
-  const resp = await fetch(`${BASE}/reprice`, {
+  file: File,
+): Promise<UploadResult> {
+  const form = new FormData();
+  form.append("session_id", sessionId);
+  form.append("file", file);
+  const resp = await fetch(`${BASE}/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!resp.ok) throw new Error(`Upload failed: HTTP ${resp.status}`);
+  return (await resp.json()) as UploadResult;
+}
+
+export async function confirmQuote(sessionId: string): Promise<ConfirmResult> {
+  const resp = await fetch(`${BASE}/confirm`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, ...changes }),
+    body: JSON.stringify({ session_id: sessionId }),
   });
-  if (!resp.ok) throw new Error("reprice failed");
-  return (await resp.json()) as Quote;
+  if (!resp.ok) throw new Error(`Confirm failed: HTTP ${resp.status}`);
+  return (await resp.json()) as ConfirmResult;
 }

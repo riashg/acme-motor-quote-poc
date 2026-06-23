@@ -1,7 +1,15 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-export function Composer({ onSend }: { onSend: (msg: string) => void }) {
+export function Composer({
+  onSend,
+  onUpload,
+}: {
+  onSend: (msg: string) => void;
+  onUpload: (file: File) => void;
+}) {
   const [text, setText] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
   return (
     <form
       onSubmit={(e) => {
@@ -13,6 +21,32 @@ export function Composer({ onSend }: { onSend: (msg: string) => void }) {
       }}
       style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid #ddd" }}
     >
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*,application/pdf"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onUpload(file);
+          e.target.value = "";
+        }}
+      />
+      <button
+        type="button"
+        aria-label="Upload document"
+        title="Upload a document"
+        onClick={() => fileRef.current?.click()}
+        style={{
+          background: "#fff",
+          border: "1px solid #ccc",
+          borderRadius: 8,
+          padding: "0 12px",
+          fontSize: 18,
+        }}
+      >
+        📎
+      </button>
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}

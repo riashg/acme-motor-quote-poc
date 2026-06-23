@@ -1,15 +1,7 @@
-import type { CoverTier, Quote } from "../types";
-import { CoverTierSelector } from "./CoverTierSelector";
-import { ExcessSlider } from "./ExcessSlider";
+import type { ConfirmResult } from "../types";
 
-export function QuoteCard({
-  quote,
-  onChange,
-}: {
-  quote: Quote;
-  onChange: (changes: { cover_tier?: CoverTier; voluntary_excess?: number }) => void;
-}) {
-  const v = quote.input.vehicle;
+export function QuoteCard({ result }: { result: ConfirmResult }) {
+  const { quote, handoff_url } = result;
   return (
     <div
       style={{
@@ -24,22 +16,35 @@ export function QuoteCard({
     >
       <div style={{ color: "var(--acme-blue)", fontWeight: 700 }}>ACME Motor Quote</div>
       <div style={{ fontSize: 13, opacity: 0.7 }}>
-        {v.make} {v.model} ({v.year}) · {v.registration}
+        Ref {quote.quote_ref} · {quote.country_code}
       </div>
       <div style={{ fontSize: 32, fontWeight: 800, margin: "8px 0" }}>
-        £{quote.annual_premium.toFixed(2)}
+        {quote.currency}
+        {quote.annual_premium.toFixed(2)}
         <span style={{ fontSize: 14, fontWeight: 400 }}> /year</span>
       </div>
-      <div className="acme-accent">£{quote.monthly_premium.toFixed(2)} /month</div>
-      <CoverTierSelector
-        value={quote.input.cover_tier}
-        onChange={(t) => onChange({ cover_tier: t })}
-      />
-      <ExcessSlider
-        value={quote.input.voluntary_excess}
-        onChange={(e) => onChange({ voluntary_excess: e })}
-      />
-      <div style={{ fontSize: 11, opacity: 0.6, marginTop: 8 }}>
+      <div className="acme-accent">
+        {quote.currency}
+        {quote.monthly_premium.toFixed(2)} /month
+      </div>
+      <a
+        href={handoff_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{
+          display: "inline-block",
+          marginTop: 14,
+          background: "var(--acme-blue)",
+          color: "#fff",
+          textDecoration: "none",
+          fontWeight: 700,
+          padding: "10px 18px",
+          borderRadius: 8,
+        }}
+      >
+        Continue to ACME →
+      </a>
+      <div style={{ fontSize: 11, opacity: 0.6, marginTop: 12 }}>
         Illustrative demo — mock data only, not a real or binding ACME quote.
       </div>
     </div>

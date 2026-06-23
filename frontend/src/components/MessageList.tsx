@@ -1,18 +1,20 @@
-import type { CoverTier, Quote } from "../types";
+import type { Candidate, ConfirmResult } from "../types";
+import { ConfirmationCard } from "./ConfirmationCard";
 import { QuoteCard } from "./QuoteCard";
 
 export interface ChatItem {
   role: "user" | "assistant";
   text?: string;
-  quote?: Quote;
+  candidate?: Candidate;
+  result?: ConfirmResult;
 }
 
 export function MessageList({
   items,
-  onQuoteChange,
+  onConfirm,
 }: {
   items: ChatItem[];
-  onQuoteChange: (changes: { cover_tier?: CoverTier; voluntary_excess?: number }) => void;
+  onConfirm: () => void;
 }) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
@@ -33,7 +35,8 @@ export function MessageList({
               {it.text}
             </div>
           )}
-          {it.quote && <QuoteCard quote={it.quote} onChange={onQuoteChange} />}
+          {it.candidate && <ConfirmationCard candidate={it.candidate} onConfirm={onConfirm} />}
+          {it.result && <QuoteCard result={it.result} />}
         </div>
       ))}
     </div>
