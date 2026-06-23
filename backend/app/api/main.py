@@ -36,9 +36,13 @@ def _get_service():
     service = getattr(app.state, "service", None)
     if service is not None:
         return service
-    if os.getenv("MOCK_LLM") == "1":
-        return FakeQuoteService()
-    return MCPQuoteService()
+    # Service backend is chosen independently of the LLM mock, so the offline
+    # demo (MOCK_LLM=1) can still drive the real MCP -> WireMock chain by setting
+    # QUOTE_SERVICE=mcp. Default: fake in MOCK mode, real MCP otherwise.
+    backend = os.getenv("QUOTE_SERVICE", "fake" if os.getenv("MOCK_LLM") == "1" else "mcp")
+    if backend == "mcp":
+        return MCPQuoteService()
+    return FakeQuoteService()
 
 
 def _llm_client():
