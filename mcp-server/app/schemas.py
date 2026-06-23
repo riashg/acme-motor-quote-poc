@@ -15,6 +15,7 @@ _GB_SCHEMA = {
     "country": "GB",
     "currency": "GBP",
     "documents": ["driving_licence", "renewal_notice"],
+    "documents_required": True,
     "fields": [
         {"name": "registration", "label": "Vehicle registration",
          "type": "string", "required": True},
@@ -40,6 +41,7 @@ _FR_SCHEMA = {
     "country": "FR",
     "currency": "EUR",
     "documents": ["carte_grise", "permis_de_conduire"],
+    "documents_required": True,
     "fields": [
         {"name": "immatriculation", "label": "Plaque d'immatriculation",
          "type": "string", "required": True},
