@@ -20,14 +20,17 @@ import json
 import os
 import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from app.agent import apply_resolution, collect_turn
+from app.agent import apply_resolution, collect_turn, confirmation_echo
+from app.conflict import reconcile
+from app.documents import extract_document
 from app.explain import explain_quote
-from app.quote_session_client import FakeQuoteService, PlatformQuoteService
+from app.extraction import whole_model_schema
+from app.quote_session_client import FakeQuoteService, PlatformQuoteService, deep_merge
 
 app = FastAPI(title="ACME Motor Quote — conversation backend (Slice 3)")
 app.add_middleware(
@@ -53,6 +56,18 @@ def _get_service():
 
 
 def _llm_client():
+    if os.getenv("MOCK_LLM") == "1":
+        return None
+    from openai import OpenAI
+
+    return OpenAI()
+
+
+def _vision_client():
+    """The OpenAI client used for document (vision) extraction — None in MOCK mode.
+
+    Mirrors ``_llm_client`` so the document path uses the same client selection;
+    ``app.documents.extract_document`` picks the vision model itself."""
     if os.getenv("MOCK_LLM") == "1":
         return None
     from openai import OpenAI
@@ -127,6 +142,99 @@ async def resolve(req: ResolveRequest):
     service = _get_service()
     client = _llm_client()
     return _sse(apply_resolution(session, service, req.path, req.value, client=client))
+
+
+def _flatten_paths(patch: dict, prefix: str = "") -> list[str]:
+    """Dot-paths of every leaf in a nested patch (lists are leaves)."""
+    out: list[str] = []
+    for key, value in (patch or {}).items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.extend(_flatten_paths(value, path))
+        else:
+            out.append(path)
+    return out
+
+
+@app.post("/upload")
+async def upload(
+    session_id: str = Form(...),
+    file: UploadFile = File(...),
+    message: str = Form(""),
+):
+    """Document-assisted extraction (brief §4.4, §4.5, §13, §17.8).
+
+    Multipart: ``session_id``, ``file`` (attachment), optional ``message`` (the
+    accompanying instruction). The file bytes + whole-model schema (+ instruction)
+    go to the extraction LLM (vision; image AND PDF). The raw bytes are ``del``'d
+    immediately after extraction and never persisted.
+
+    * A *named-driver* instruction appends the extracted person to
+      ``namedDrivers[]`` via ``update`` — the applicant is left untouched.
+    * Otherwise the patch is ``reconcile``d against the current quote: the
+      non-conflicting part is applied; genuine conflicts are queued for the
+      existing ``/resolve`` endpoint (never silently overwritten, §4.6).
+
+    Returns ``{extracted, applied, conflicts, echo, missingFields, journeyState,
+    target}``."""
+    session = _require_session(session_id)
+    service = _get_service()
+
+    file_bytes = await file.read()
+    result = extract_document(
+        file_bytes,
+        file.content_type or "application/octet-stream",
+        file.filename or "",
+        message or "",
+        whole_model_schema(),
+        client=_vision_client(),
+    )
+    del file_bytes  # never persist the raw document bytes.
+
+    patch = result["patch"]
+    extracted = _flatten_paths(patch)
+    quote_id = session["quoteId"]
+    platform_session = session["sessionId"]
+    session.setdefault("current", {})
+
+    if result["target"] == "named_driver":
+        # Append (do NOT overwrite the applicant). Read-modify-write the list.
+        existing = list(session["current"].get("namedDrivers", []))
+        existing.append(patch)
+        state = await service.update(quote_id, platform_session, {"namedDrivers": existing})
+        session["current"]["namedDrivers"] = existing
+        return {
+            "extracted": extracted,
+            "applied": ["namedDrivers[]"],
+            "conflicts": [],
+            "echo": f"✓ Added named driver {patch.get('firstName', '')} {patch.get('surname', '')}".strip(),
+            "missingFields": (state or {}).get("missingFields", []),
+            "journeyState": (state or {}).get("journeyState"),
+            "target": "named_driver",
+        }
+
+    # Applicant path: reconcile against the held quote (§4.6).
+    applicable, conflicts = reconcile(session["current"], patch)
+
+    if applicable:
+        state = await service.update(quote_id, platform_session, applicable)
+        deep_merge(session["current"], applicable)
+    else:
+        state = await service.get(quote_id, platform_session)
+
+    if conflicts:
+        # Queue for the existing /resolve flow — do not overwrite held values.
+        session["pending_conflicts"] = conflicts
+
+    return {
+        "extracted": extracted,
+        "applied": _flatten_paths(applicable),
+        "conflicts": conflicts,
+        "echo": confirmation_echo(applicable),
+        "missingFields": (state or {}).get("missingFields", []),
+        "journeyState": (state or {}).get("journeyState"),
+        "target": "applicant",
+    }
 
 
 def _require_session(session_id: str) -> dict:

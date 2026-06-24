@@ -99,6 +99,25 @@ def main() -> None:
     )
 
     _doc(
+        out / "uk-driving-licence.pdf",
+        "DVLA Driving Licence (sample)",
+        "Driving licence",
+        [
+            ("1. Surname", "SAMPLE"),
+            ("2. First name(s)", "SAM"),
+            ("Title", "Mr"),
+            ("3. Date of birth", "01.01.1990"),
+            ("4b. Valid to", "31.12.2035"),
+            ("4c. Issued by", "DVLA"),
+            ("5. Licence number", "SAMPL901011SM9AB"),
+            ("8. Address", "10 Sample Street, RG1 1AA"),
+            ("9. Categories", "B (full)"),
+            ("Held since", "2008 (15 years)"),
+        ],
+        "SAMPLE / synthetic data only — not a real DVLA driving licence, not connected to any real system.",
+    )
+
+    _doc(
         out / "fr-carte-grise.pdf",
         "Certificat d'immatriculation (carte grise)",
         "Certificat — exemple",
