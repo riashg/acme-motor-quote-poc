@@ -148,3 +148,124 @@ def test_get_quote_raises_on_404_for_session_mismatch():
 
     with pytest.raises(httpx.HTTPStatusError):
         _client(handler).get_quote("q-1", "wrong-session")
+
+
+# --- Journey tools: price / purchase-link / issue-policy ---
+
+
+def test_price_posts_to_price_path_with_session_header_and_parses_pricing():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["session_header"] = request.headers.get("X-Session-Id")
+        return httpx.Response(
+            200,
+            json={
+                "annualPremium": 612.50,
+                "currency": "GBP",
+                "iptIncluded": True,
+                "monthly": {"deposit": 61.25, "installment": 50.11, "instalments": 11},
+                "compulsoryExcess": 150,
+                "voluntaryExcess": 100,
+                "totalExcess": 250,
+                "ncdYears": 5,
+                "outcome": "quote",
+                "reasons": [],
+                "breakdown": [{"label": "Base", "amount": 500.0}],
+            },
+        )
+
+    result = _client(handler).price("q-1", "s-1")
+
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/quotes/q-1/price"
+    assert seen["session_header"] == "s-1"
+    assert result["annualPremium"] == 612.50
+    assert result["outcome"] == "quote"
+
+
+def test_price_returns_error_dict_on_422_incomplete():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            422,
+            json={"error": "Quote incomplete", "missingFields": ["customer.dateOfBirth"]},
+        )
+
+    result = _client(handler).price("q-1", "s-1")
+
+    assert result["error"] == "Quote incomplete"
+    assert result["missingFields"] == ["customer.dateOfBirth"]
+
+
+def test_price_raises_on_5xx():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _client(handler).price("q-1", "s-1")
+
+
+def test_generate_purchase_link_posts_to_path_with_session_and_parses():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["session_header"] = request.headers.get("X-Session-Id")
+        return httpx.Response(
+            200,
+            json={"purchaseToken": "tok-9", "purchaseUrl": "https://acme.test/buy/tok-9"},
+        )
+
+    result = _client(handler).generate_purchase_link("q-1", "s-1")
+
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/quotes/q-1/purchase-link"
+    assert seen["session_header"] == "s-1"
+    assert result["purchaseToken"] == "tok-9"
+    assert result["purchaseUrl"] == "https://acme.test/buy/tok-9"
+
+
+def test_generate_purchase_link_returns_error_dict_on_409():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"error": "Quote is not a clean quote"})
+
+    result = _client(handler).generate_purchase_link("q-1", "s-1")
+
+    assert result["error"] == "Quote is not a clean quote"
+
+
+def test_issue_policy_posts_to_path_with_session_and_parses():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["session_header"] = request.headers.get("X-Session-Id")
+        return httpx.Response(
+            200,
+            json={
+                "policyNumber": "POL-123",
+                "status": "issued",
+                "effectiveDate": "2026-07-01",
+            },
+        )
+
+    result = _client(handler).issue_policy("q-1", "s-1")
+
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/quotes/q-1/issue-policy"
+    assert seen["session_header"] == "s-1"
+    assert result["policyNumber"] == "POL-123"
+    assert result["status"] == "issued"
+
+
+def test_issue_policy_returns_error_dict_on_409():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"error": "Quote is not a clean quote"})
+
+    result = _client(handler).issue_policy("q-1", "s-1")
+
+    assert result["error"] == "Quote is not a clean quote"

@@ -43,7 +43,24 @@ _INSTRUCTIONS = (
     "4) Use lookup_vehicle(registration) to resolve make/model and "
     "lookup_address(postcode) to resolve an address; confirm with the user "
     "before storing.\n"
-    "5) For renewals, claims, multi-vehicle, cancellations or any journey other "
+    "5) When missingFields is empty (the quote is complete), call "
+    "price_motor_quote(quote_id, session_id). The pricing comes ONLY from this "
+    "tool — never invent a premium. Read the response 'outcome':\n"
+    "   - 'quote': share the annualPremium (and monthly figures), excesses and "
+    "the breakdown exactly as returned, then offer to proceed.\n"
+    "   - 'refer' or 'decline': explain using the returned 'reasons' verbatim; "
+    "do NOT invent a price or a reason, and do not offer to purchase.\n"
+    "   (price_motor_quote may return an error dict with missingFields if the "
+    "quote is not yet complete — go back and collect those fields.)\n"
+    "6) Only if the outcome is a clean 'quote' and the user wants to proceed, "
+    "call generate_purchase_link(quote_id, session_id) and give the user the "
+    "returned purchaseUrl so they can pay.\n"
+    "7) Only after the user explicitly confirms, call "
+    "issue_policy(quote_id, session_id) and report the returned policyNumber, "
+    "status and effectiveDate. (generate_purchase_link / issue_policy return an "
+    "error dict on 409 if the quote is not a clean quote — surface that, do not "
+    "fabricate a policy.)\n"
+    "8) For renewals, claims, multi-vehicle, cancellations or any journey other "
     "than a new motor quote, tell the user to visit ACME's website instead."
 )
 
@@ -81,6 +98,40 @@ def update_motor_quote(quote_id: str, session_id: str, patch: dict) -> dict:
     return _platform.update_quote(quote_id, session_id, patch)
 
 
+def price_motor_quote(quote_id: str, session_id: str) -> dict:
+    """Price a completed quote and return the pricing object.
+
+    Returns the platform's pricing (annualPremium, monthly, excesses, ncdYears,
+    outcome, reasons, breakdown). If the quote is incomplete the platform
+    returns an error dict with missingFields instead of raising — surface that
+    and collect the missing fields. Never invent a premium or outcome; they come
+    only from this tool. Requires the matching sessionId.
+    """
+    return _platform.price(quote_id, session_id)
+
+
+def generate_purchase_link(quote_id: str, session_id: str) -> dict:
+    """Generate a purchase link for a clean quote.
+
+    Returns {purchaseToken, purchaseUrl} to hand to the user. Only valid when
+    the quote's outcome is a clean 'quote'; otherwise the platform returns an
+    error dict (409) which must be surfaced, not fabricated. Requires the
+    matching sessionId.
+    """
+    return _platform.generate_purchase_link(quote_id, session_id)
+
+
+def issue_policy(quote_id: str, session_id: str) -> dict:
+    """Issue a policy for a clean quote after the user confirms.
+
+    Returns {policyNumber, status, effectiveDate}. Only valid when the quote's
+    outcome is a clean 'quote'; otherwise the platform returns an error dict
+    (409) which must be surfaced. This is not idempotent. Requires the matching
+    sessionId.
+    """
+    return _platform.issue_policy(quote_id, session_id)
+
+
 def lookup_vehicle(registration: str) -> dict:
     """Resolve a vehicle (make/model/derivative/fuel/transmission) from its registration."""
     return _platform.lookup_vehicle(registration)
@@ -114,6 +165,33 @@ mcp.tool(
         idempotentHint=True,
     )
 )(update_motor_quote)
+mcp.tool(
+    annotations=ToolAnnotations(
+        title="Price motor quote",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)(price_motor_quote)
+mcp.tool(
+    annotations=ToolAnnotations(
+        title="Generate purchase link",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)(generate_purchase_link)
+mcp.tool(
+    annotations=ToolAnnotations(
+        title="Issue policy",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
+)(issue_policy)
 mcp.tool(
     annotations=ToolAnnotations(
         title="Look up vehicle", readOnlyHint=True, openWorldHint=True
