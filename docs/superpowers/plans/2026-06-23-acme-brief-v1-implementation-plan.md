@@ -93,6 +93,7 @@ Routing: `route_to_alternative_channel`.
 | 5 | Pricing & underwriting (quote/refer/decline) + explainable breakdown | outline |
 | 6 | Quote continuation (save / mock OTP / resume / reprice) | outline |
 | 7 | Purchase handoff to the **strict GUID** landing page | outline |
+| 8 | **Mock policy issuance** (extends journey beyond quote, per team): a mock Policy Service issues a policy number + status after purchase; `POLICY_CREATED` event; issued via the **vendor SOAP seam**. Real issuance/payments remain out of scope (brief §2) — only the **seam is visible**. Journey: quote → price → purchase → **issue (mock) policy**. | outline |
 
 Cadence: ~one slice per weekly iteration; each ends with a working, demoable increment.
 

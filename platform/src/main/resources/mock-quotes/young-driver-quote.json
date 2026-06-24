@@ -1,0 +1,29 @@
+{
+  "_scenario": "Under-25 driver — expected outcome: QUOTE (with young-driver loading)",
+  "vehicle": {
+    "registration": "FX19ZTC", "make": "Ford", "model": "Fiesta", "derivative": "Zetec",
+    "fuel": "Petrol", "transmission": "Manual", "datePurchased": { "month": 3, "year": 2020 },
+    "value": 9000, "useOfVehicle": "Social + commuting", "security": "Factory-fitted",
+    "dashcam": false, "modified": false, "imported": "No",
+    "daytimeLocation": "street", "overnightLocation": "street",
+    "annualMileage": 12000, "registeredKeeper": true, "legalOwner": true
+  },
+  "customer": {
+    "title": "Ms", "firstName": "Jess", "surname": "Sample", "dateOfBirth": "2004-04-01",
+    "maritalStatus": "Single", "childrenUnder16": 0, "employmentStatus": "Student",
+    "partTimeJob": true, "yearsLivedInUK": "Since birth",
+    "address": { "houseNumberOrName": "22", "postcode": "LS1 4DY" },
+    "ownsProperty": false, "carKeptOvernightAtAddress": true,
+    "email": "jess.sample@example.com", "mobile": "07000000001"
+  },
+  "driver": {
+    "licenceType": "Full UK", "licenceHeldFor": 2, "insuranceCancelledOrVoid": false,
+    "ncdYears": 1, "ncdOnCompanyCar": false
+  },
+  "history": { "claimsLast3Years": 0, "offencesLast5Years": 0, "unspentCriminalConvictions": false },
+  "household": { "carsInHousehold": 1, "anotherCarHasCover": false, "regularUseOfOtherVehicles": "None" },
+  "cover": {
+    "paymentMethod": "Monthly instalments", "coverLevel": "Comprehensive",
+    "coverStartDate": "2026-07-01", "voluntaryExcess": 100
+  }
+}

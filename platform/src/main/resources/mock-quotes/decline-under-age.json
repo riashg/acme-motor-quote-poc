@@ -1,0 +1,29 @@
+{
+  "_scenario": "Under-18 driver — expected outcome: DECLINE",
+  "vehicle": {
+    "registration": "FX19ZTC", "make": "Ford", "model": "Ka", "derivative": "Studio",
+    "fuel": "Petrol", "transmission": "Manual", "datePurchased": { "month": 1, "year": 2018 },
+    "value": 4000, "useOfVehicle": "Social only", "security": "None",
+    "dashcam": false, "modified": false, "imported": "No",
+    "daytimeLocation": "street", "overnightLocation": "street",
+    "annualMileage": 5000, "registeredKeeper": true, "legalOwner": true
+  },
+  "customer": {
+    "title": "Mx", "firstName": "Robin", "surname": "Sample", "dateOfBirth": "2010-02-15",
+    "maritalStatus": "Single", "childrenUnder16": 0, "employmentStatus": "Student",
+    "partTimeJob": false, "yearsLivedInUK": "Since birth",
+    "address": { "houseNumberOrName": "5", "postcode": "M1 2AB" },
+    "ownsProperty": false, "carKeptOvernightAtAddress": true,
+    "email": "robin.sample@example.com", "mobile": "07000000003"
+  },
+  "driver": {
+    "licenceType": "Provisional UK", "licenceHeldFor": 0, "insuranceCancelledOrVoid": false,
+    "ncdYears": 0, "ncdOnCompanyCar": false
+  },
+  "history": { "claimsLast3Years": 0, "offencesLast5Years": 0, "unspentCriminalConvictions": false },
+  "household": { "carsInHousehold": 1, "anotherCarHasCover": false, "regularUseOfOtherVehicles": "None" },
+  "cover": {
+    "paymentMethod": "Monthly instalments", "coverLevel": "Third Party, Fire & Theft",
+    "coverStartDate": "2026-07-01", "voluntaryExcess": 0
+  }
+}

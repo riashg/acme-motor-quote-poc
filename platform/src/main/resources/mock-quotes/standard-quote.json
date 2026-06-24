@@ -1,0 +1,29 @@
+{
+  "_scenario": "Standard clean profile — expected underwriting outcome: QUOTE",
+  "vehicle": {
+    "registration": "FX19ZTC", "make": "Ford", "model": "Focus", "derivative": "Titanium",
+    "fuel": "Petrol", "transmission": "Manual", "datePurchased": { "month": 6, "year": 2019 },
+    "value": 12000, "useOfVehicle": "Social + commuting", "security": "Factory-fitted",
+    "dashcam": true, "modified": false, "imported": "No",
+    "daytimeLocation": "car park", "overnightLocation": "drive",
+    "annualMileage": 8000, "registeredKeeper": true, "legalOwner": true
+  },
+  "customer": {
+    "title": "Mr", "firstName": "Sam", "surname": "Sample", "dateOfBirth": "1990-01-01",
+    "maritalStatus": "Married", "childrenUnder16": 1, "employmentStatus": "Employed",
+    "partTimeJob": false, "yearsLivedInUK": "Since birth",
+    "address": { "houseNumberOrName": "10", "postcode": "RG1 1AA" },
+    "ownsProperty": true, "carKeptOvernightAtAddress": true,
+    "email": "sam.sample@example.com", "mobile": "07000000000"
+  },
+  "driver": {
+    "licenceType": "Full UK", "licenceHeldFor": 15, "insuranceCancelledOrVoid": false,
+    "ncdYears": 5, "ncdOnCompanyCar": false
+  },
+  "history": { "claimsLast3Years": 0, "offencesLast5Years": 0, "unspentCriminalConvictions": false },
+  "household": { "carsInHousehold": 2, "anotherCarHasCover": true, "regularUseOfOtherVehicles": "Named car" },
+  "cover": {
+    "paymentMethod": "Monthly instalments", "coverLevel": "Comprehensive",
+    "coverStartDate": "2026-07-01", "voluntaryExcess": 250
+  }
+}

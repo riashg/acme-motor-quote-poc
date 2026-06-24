@@ -1,0 +1,29 @@
+{
+  "_scenario": "High-value vehicle (> GBP 75,000) — expected outcome: REFER",
+  "vehicle": {
+    "registration": "PF21XYZ", "make": "Tesla", "model": "Model S", "derivative": "Plaid",
+    "fuel": "Electric", "transmission": "Automatic", "datePurchased": { "month": 9, "year": 2021 },
+    "value": 92000, "useOfVehicle": "Social only", "security": "Tracker",
+    "dashcam": true, "modified": false, "imported": "No",
+    "daytimeLocation": "garage", "overnightLocation": "garage",
+    "annualMileage": 6000, "registeredKeeper": true, "legalOwner": true
+  },
+  "customer": {
+    "title": "Dr", "firstName": "Alex", "surname": "Sample", "dateOfBirth": "1978-11-20",
+    "maritalStatus": "Married", "childrenUnder16": 2, "employmentStatus": "Self-employed",
+    "partTimeJob": false, "yearsLivedInUK": "Since birth",
+    "address": { "houseNumberOrName": "1", "postcode": "EH1 1AA" },
+    "ownsProperty": true, "carKeptOvernightAtAddress": true,
+    "email": "alex.sample@example.com", "mobile": "07000000002"
+  },
+  "driver": {
+    "licenceType": "Full UK", "licenceHeldFor": 25, "insuranceCancelledOrVoid": false,
+    "ncdYears": 9, "ncdOnCompanyCar": false
+  },
+  "history": { "claimsLast3Years": 0, "offencesLast5Years": 0, "unspentCriminalConvictions": false },
+  "household": { "carsInHousehold": 3, "anotherCarHasCover": true, "regularUseOfOtherVehicles": "Any car" },
+  "cover": {
+    "paymentMethod": "Single payment", "coverLevel": "Comprehensive",
+    "coverStartDate": "2026-07-01", "voluntaryExcess": 500
+  }
+}
