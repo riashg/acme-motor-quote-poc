@@ -19,6 +19,7 @@ import org.springframework.web.server.ResponseStatusException;
 import com.acme.platform.events.ApiActivity;
 import com.acme.platform.quote.DemoSeeder;
 import com.acme.platform.quote.QuoteService;
+import com.acme.platform.quote.QuoteService.PriceResult;
 import com.acme.platform.vendor.VendorClient;
 
 /**
@@ -113,6 +114,43 @@ public class PlatformController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quote not found");
         }
         return state;
+    }
+
+    /**
+     * Price a quote: rate (via the vendor SOAP seam) + underwrite (platform),
+     * returning the brief §11 pricing object. Requires X-Session-Id; 404 on
+     * unknown id or mismatch (same as other quote routes). 422 if mandatory
+     * fields remain (can't price an incomplete quote).
+     */
+    @PostMapping("/quotes/{quoteId}/price")
+    public ResponseEntity<Map<String, Object>> priceQuote(
+        @PathVariable String quoteId,
+        @RequestHeader(name = "X-Session-Id", required = false) String sessionId
+    ) {
+        if (DemoSeeder.DEMO_QUOTE_ID.equals(quoteId)) {
+            demo.ensureSeeded();
+        }
+        PriceResult result = quotes.priceQuote(quoteId, sessionId == null ? "" : sessionId);
+
+        Map<String, Object> response = switch (result.status()) {
+            case NOT_FOUND -> Map.of("error", "not_found");
+            case INCOMPLETE -> {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("error", "not_ready_to_price");
+                body.put("missingFields", result.state().get("missingFields"));
+                yield body;
+            }
+            case PRICED -> result.pricing();
+        };
+
+        // API layer: log request + response (never the sessionId).
+        api.record("price_quote", Map.of("quoteId", quoteId), response);
+
+        return switch (result.status()) {
+            case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quote not found");
+            case INCOMPLETE -> ResponseEntity.unprocessableEntity().body(response);
+            case PRICED -> ResponseEntity.ok(response);
+        };
     }
 
     /** Vehicle lookup via the vendor SOAP seam (no session required). */

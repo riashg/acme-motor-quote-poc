@@ -7,6 +7,7 @@ import java.util.Map;
 import org.springframework.stereotype.Service;
 
 import com.acme.platform.events.EventStore;
+import com.acme.platform.pricing.PricingService;
 
 /**
  * Quote service — session-scoped create / get / update (brief §6, §9, §17.4).
@@ -26,10 +27,12 @@ public class QuoteService {
 
     private final SessionStore sessions;
     private final EventStore events;
+    private final PricingService pricing;
 
-    public QuoteService(SessionStore sessions, EventStore events) {
+    public QuoteService(SessionStore sessions, EventStore events, PricingService pricing) {
         this.sessions = sessions;
         this.events = events;
+        this.pricing = pricing;
     }
 
     /** Create a draft quote bound to a fresh session. Emits {@code QUOTE_CREATED}. */
@@ -66,14 +69,74 @@ public class QuoteService {
         return state(record);
     }
 
+    /** Outcome of a price request: {@code NOT_FOUND}, {@code INCOMPLETE}, or {@code PRICED}. */
+    public enum PriceStatus { NOT_FOUND, INCOMPLETE, PRICED }
+
+    /**
+     * Result of {@link #priceQuote}: the status, the state object (for
+     * {@code PRICED}/{@code INCOMPLETE}), and the standalone pricing object
+     * (for {@code PRICED}).
+     */
+    public record PriceResult(PriceStatus status, Map<String, Object> state, Map<String, Object> pricing) {
+    }
+
+    /**
+     * Price a quote (Slice 5): session-gated, requires completeness, then rates
+     * via the vendor seam and underwrites on the platform. Writes the pricing
+     * object and {@code currentOutcome} into the quote, sets {@code journeyState}
+     * to {@code quoted}/{@code referred}/{@code declined}, and emits
+     * {@code QUOTE_PRICED} (payload: {@code quoteId} + {@code outcome}, never the
+     * sessionId).
+     *
+     * <ul>
+     *   <li>Unknown quote or session mismatch → {@code NOT_FOUND}.</li>
+     *   <li>Mandatory fields still missing → {@code INCOMPLETE} (can't price an
+     *       incomplete quote); the state carries the remaining {@code missingFields}.</li>
+     *   <li>Otherwise → {@code PRICED} with the full state + pricing object.</li>
+     * </ul>
+     */
+    public PriceResult priceQuote(String quoteId, String sessionId) {
+        QuoteRecord record = sessions.get(quoteId, sessionId);
+        if (record == null) {
+            return new PriceResult(PriceStatus.NOT_FOUND, null, null);
+        }
+        List<String> missing = RequiredFields.missingFields(record.data());
+        if (!missing.isEmpty()) {
+            // Can't price an incomplete quote — surface what remains.
+            return new PriceResult(PriceStatus.INCOMPLETE, state(record), null);
+        }
+
+        Map<String, Object> pricingObject = pricing.price(record.data());
+        String outcome = (String) pricingObject.get("outcome");
+
+        // Persist into the quote so GET /quotes/{id} reflects the priced state.
+        record.data().put("pricing", pricingObject);
+        record.data().put("currentOutcome", outcome);
+
+        // Domain event: quoteId + outcome only (never the sessionId).
+        Map<String, Object> eventPayload = new LinkedHashMap<>();
+        eventPayload.put("quoteId", record.quoteId());
+        eventPayload.put("outcome", outcome);
+        events.append("QUOTE_PRICED", eventPayload, "domain");
+
+        return new PriceResult(PriceStatus.PRICED, state(record), pricingObject);
+    }
+
     /** Build the brief §6 state object. Never includes the sessionId. */
     private Map<String, Object> state(QuoteRecord record) {
-        List<String> missing = RequiredFields.missingFields(record.data());
+        Map<String, Object> data = record.data();
+        List<String> missing = RequiredFields.missingFields(data);
+        String currentOutcome = (String) data.get("currentOutcome");
         Map<String, Object> state = new LinkedHashMap<>();
         state.put("quoteId", record.quoteId());
-        state.put("journeyState", journeyState(record.data(), missing));
+        state.put("journeyState", journeyState(data, missing, currentOutcome));
         state.put("missingFields", missing);
-        state.put("currentOutcome", null);
+        state.put("currentOutcome", currentOutcome);
+        // Surface the priced pricing object (if any) so GET /quotes/{id} shows it.
+        Object pricingObject = data.get("pricing");
+        if (pricingObject != null) {
+            state.put("pricing", pricingObject);
+        }
         return state;
     }
 
@@ -81,9 +144,13 @@ public class QuoteService {
      * Derive the journey state (brief §6):
      * {@code quote_started} (nothing collected) →
      * {@code collecting} (some data, gaps) →
-     * {@code ready_to_price} (no mandatory fields remain).
+     * {@code ready_to_price} (no mandatory fields remain) →
+     * {@code quoted}/{@code referred}/{@code declined} (priced, from the outcome).
      */
-    private static String journeyState(Map<String, Object> data, List<String> missing) {
+    private static String journeyState(Map<String, Object> data, List<String> missing, String currentOutcome) {
+        if (currentOutcome != null) {
+            return PricingService.journeyStateFor(currentOutcome);
+        }
         if (missing.isEmpty()) {
             return "ready_to_price";
         }

@@ -13,6 +13,11 @@ import java.util.Map;
  * data. Later, a {@code SoapVendorClient} — generated from the vendor WSDL with
  * JAX-WS / Spring-WS stubs and WS-Security as needed — will implement this same
  * interface, so swapping mock&rarr;SOAP changes nothing in the callers.
+ *
+ * <p><b>Rating</b> ({@link #rate}) belongs here too: in a real insurer the
+ * premium is a value obtained from the vendor over SOAP, not something the
+ * platform computes. The platform owns only <i>underwriting</i> (quote / refer /
+ * decline); the price itself comes through this seam.
  */
 public interface VendorClient {
 
@@ -21,4 +26,15 @@ public interface VendorClient {
 
     /** Resolve a postcode to a list of candidate addresses. */
     List<Map<String, Object>> lookupAddress(String postcode);
+
+    /**
+     * Rate a quote: return the annual premium plus a transparent breakdown
+     * (brief §15). A real insurer obtains this from the vendor over SOAP, so it
+     * lives behind the seam; {@link MockVendorClient#rate} implements the brief's
+     * deterministic mock model.
+     *
+     * @param quoteData the whole-model quote payload (nested maps)
+     * @return the rated premium and its {@code {label, amount}} breakdown lines
+     */
+    RatingResult rate(Map<String, Object> quoteData);
 }

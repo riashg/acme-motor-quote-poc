@@ -28,6 +28,7 @@ class PlatformApiTest {
 
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
+    @Autowired com.acme.platform.events.EventStore eventStore;
 
     @Test
     void health() throws Exception {
@@ -115,12 +116,18 @@ class PlatformApiTest {
     }
 
     @Test
-    void demoQuoteResolvesWithDemoSessionAndIsReadyToPrice() throws Exception {
+    void demoQuoteResolvesWithDemoSessionAndIsPricedAndQuoted() throws Exception {
+        // The stable demo GUID is pre-priced on seed (Slice 5): a full sample
+        // that ends up quoted with a visible pricing object.
         mvc.perform(get("/quotes/" + DemoSeeder.DEMO_QUOTE_ID).header("X-Session-Id", DemoSeeder.DEMO_SESSION_ID))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.quoteId").value(DemoSeeder.DEMO_QUOTE_ID))
             .andExpect(jsonPath("$.missingFields", is(empty())))
-            .andExpect(jsonPath("$.journeyState").value("ready_to_price"));
+            .andExpect(jsonPath("$.journeyState").value("quoted"))
+            .andExpect(jsonPath("$.currentOutcome").value("quote"))
+            .andExpect(jsonPath("$.pricing.annualPremium").exists())
+            .andExpect(jsonPath("$.pricing.currency").value("GBP"))
+            .andExpect(jsonPath("$.pricing.outcome").value("quote"));
     }
 
     @Test
@@ -129,8 +136,158 @@ class PlatformApiTest {
             .andExpect(status().isNotFound());
     }
 
+    @Test
+    void priceCompleteQuoteReturnsPricingObjectQuotedAndEmitsQuotePriced() throws Exception {
+        JsonNode created = create();
+        String qid = created.get("quoteId").asText();
+        String sid = created.get("sessionId").asText();
+        patchComplete(qid, sid, completePatch());
+
+        mvc.perform(post("/quotes/" + qid + "/price").header("X-Session-Id", sid))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.outcome").value("quote"))
+            .andExpect(jsonPath("$.currency").value("GBP"))
+            .andExpect(jsonPath("$.iptIncluded").value(true))
+            .andExpect(jsonPath("$.annualPremium").exists())
+            .andExpect(jsonPath("$.monthly.instalments").value(10))
+            .andExpect(jsonPath("$.totalExcess").exists())
+            .andExpect(jsonPath("$.breakdown").isArray());
+
+        // GET reflects quoted + pricing.
+        mvc.perform(get("/quotes/" + qid).header("X-Session-Id", sid))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.journeyState").value("quoted"))
+            .andExpect(jsonPath("$.currentOutcome").value("quote"))
+            .andExpect(jsonPath("$.pricing.outcome").value("quote"));
+
+        // QUOTE_PRICED domain event emitted (payload has quoteId + outcome, no sessionId).
+        org.assertj.core.api.Assertions.assertThat(eventStore.all())
+            .anyMatch(e -> e.type().equals("QUOTE_PRICED")
+                && qid.equals(e.payload().get("quoteId"))
+                && "quote".equals(e.payload().get("outcome")));
+        org.assertj.core.api.Assertions.assertThat(eventStore.all())
+            .noneMatch(e -> e.payload().toString().contains(sid));
+    }
+
+    @Test
+    void priceHighValueVehicleRefers() throws Exception {
+        JsonNode created = create();
+        String qid = created.get("quoteId").asText();
+        String sid = created.get("sessionId").asText();
+        com.fasterxml.jackson.databind.node.ObjectNode patch = completePatch();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) patch.get("vehicle")).put("value", 90000);
+        patchComplete(qid, sid, patch);
+
+        mvc.perform(post("/quotes/" + qid + "/price").header("X-Session-Id", sid))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.outcome").value("refer"))
+            .andExpect(jsonPath("$.reasons").isNotEmpty());
+
+        mvc.perform(get("/quotes/" + qid).header("X-Session-Id", sid))
+            .andExpect(jsonPath("$.journeyState").value("referred"));
+    }
+
+    @Test
+    void priceUnder18Declines() throws Exception {
+        JsonNode created = create();
+        String qid = created.get("quoteId").asText();
+        String sid = created.get("sessionId").asText();
+        com.fasterxml.jackson.databind.node.ObjectNode patch = completePatch();
+        ((com.fasterxml.jackson.databind.node.ObjectNode) patch.get("customer"))
+            .put("dateOfBirth", java.time.LocalDate.now().minusYears(17).toString());
+        patchComplete(qid, sid, patch);
+
+        mvc.perform(post("/quotes/" + qid + "/price").header("X-Session-Id", sid))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.outcome").value("decline"))
+            .andExpect(jsonPath("$.reasons").isNotEmpty());
+
+        mvc.perform(get("/quotes/" + qid).header("X-Session-Id", sid))
+            .andExpect(jsonPath("$.journeyState").value("declined"));
+    }
+
+    @Test
+    void priceWrongOrMissingSessionIsNotFound() throws Exception {
+        JsonNode created = create();
+        String qid = created.get("quoteId").asText();
+        mvc.perform(post("/quotes/" + qid + "/price")).andExpect(status().isNotFound());
+        mvc.perform(post("/quotes/" + qid + "/price").header("X-Session-Id", "wrong"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void priceIncompleteQuoteIsUnprocessableWithMissingFields() throws Exception {
+        JsonNode created = create();
+        String qid = created.get("quoteId").asText();
+        String sid = created.get("sessionId").asText();
+
+        mvc.perform(post("/quotes/" + qid + "/price").header("X-Session-Id", sid))
+            .andExpect(status().isUnprocessableEntity())
+            .andExpect(jsonPath("$.error").value("not_ready_to_price"))
+            .andExpect(jsonPath("$.missingFields").isNotEmpty());
+    }
+
     private JsonNode create() throws Exception {
         MvcResult res = mvc.perform(post("/quotes")).andExpect(status().isCreated()).andReturn();
         return mapper.readTree(res.getResponse().getContentAsString());
+    }
+
+    /** Patch the quote to mandatory-completeness; assert no missing fields remain. */
+    private void patchComplete(String qid, String sid, com.fasterxml.jackson.databind.node.ObjectNode patch) throws Exception {
+        com.fasterxml.jackson.databind.node.ObjectNode body = mapper.createObjectNode();
+        body.set("patch", patch);
+        mvc.perform(patch("/quotes/" + qid)
+                .header("X-Session-Id", sid)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(mapper.writeValueAsString(body)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.missingFields", is(empty())))
+            .andExpect(jsonPath("$.journeyState").value("ready_to_price"));
+    }
+
+    /** A whole-model patch filling every mandatory field with realistic values. */
+    private com.fasterxml.jackson.databind.node.ObjectNode completePatch() {
+        com.fasterxml.jackson.databind.node.ObjectNode patch = mapper.createObjectNode();
+        for (String path : com.acme.platform.quote.RequiredFields.MANDATORY_FIELDS) {
+            setPath(patch, path, "filled");
+        }
+        // Realistic rating/underwriting inputs for a clean quote.
+        setPath(patch, "customer.dateOfBirth", "1990-01-01");
+        setPath(patch, "customer.address.postcode", "RG1 1AA");
+        setNumber(patch, "vehicle.value", 12000);
+        setNumber(patch, "vehicle.annualMileage", 8000);
+        setNumber(patch, "history.claimsLast3Years", 0);
+        setNumber(patch, "history.offencesLast5Years", 0);
+        setPath(patch, "cover.coverLevel", "Comprehensive");
+        setNumber(patch, "cover.voluntaryExcess", 250);
+        setNumber(patch, "driver.ncdYears", 5);
+        return patch;
+    }
+
+    private void setPath(com.fasterxml.jackson.databind.node.ObjectNode root, String dotPath, String value) {
+        com.fasterxml.jackson.databind.node.ObjectNode node = walk(root, dotPath);
+        node.put(lastSegment(dotPath), value);
+    }
+
+    private void setNumber(com.fasterxml.jackson.databind.node.ObjectNode root, String dotPath, int value) {
+        com.fasterxml.jackson.databind.node.ObjectNode node = walk(root, dotPath);
+        node.put(lastSegment(dotPath), value);
+    }
+
+    private com.fasterxml.jackson.databind.node.ObjectNode walk(com.fasterxml.jackson.databind.node.ObjectNode root, String dotPath) {
+        String[] parts = dotPath.split("\\.");
+        com.fasterxml.jackson.databind.node.ObjectNode cur = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (!(cur.get(parts[i]) instanceof com.fasterxml.jackson.databind.node.ObjectNode)) {
+                cur.set(parts[i], mapper.createObjectNode());
+            }
+            cur = (com.fasterxml.jackson.databind.node.ObjectNode) cur.get(parts[i]);
+        }
+        return cur;
+    }
+
+    private static String lastSegment(String dotPath) {
+        String[] parts = dotPath.split("\\.");
+        return parts[parts.length - 1];
     }
 }

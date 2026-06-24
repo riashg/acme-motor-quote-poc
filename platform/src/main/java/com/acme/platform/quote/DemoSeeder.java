@@ -7,6 +7,8 @@ import java.util.Map;
 
 import org.springframework.stereotype.Component;
 
+import com.acme.platform.pricing.PricingService;
+
 /**
  * Stable demo GUID + session (brief §9, §17.6, §17.7).
  *
@@ -23,8 +25,8 @@ import org.springframework.stereotype.Component;
  *   DEMO_SESSION_ID = "demo-session-0000000000000000000000000000000"
  * </pre>
  *
- * <p>All sample data is synthetic. Pricing is a placeholder ({@code null}) until
- * the rating engine slice.
+ * <p>All sample data is synthetic. The sample is pre-priced on seed (Slice 5)
+ * so the demo GUID resolves to a fully-priced {@code quoted} quote.
  */
 @Component
 public class DemoSeeder {
@@ -33,19 +35,29 @@ public class DemoSeeder {
     public static final String DEMO_SESSION_ID = "demo-session-0000000000000000000000000000000";
 
     private final SessionStore sessions;
+    private final PricingService pricing;
 
-    public DemoSeeder(SessionStore sessions) {
+    public DemoSeeder(SessionStore sessions, PricingService pricing) {
         this.sessions = sessions;
+        this.pricing = pricing;
     }
 
     /**
      * Seed the demo quote on first access; return its record. Idempotent:
      * re-seeds only if the fixed id is not already present, so it never disturbs
      * an in-progress quote (which carries a random GUID).
+     *
+     * <p>The sample is pre-priced on seed so the stable demo GUID always resolves
+     * to a fully-priced {@code quoted} sample (brief §9, §17.7) — no need to call
+     * {@code /price} first for demos / screenshots.
      */
     public synchronized QuoteRecord ensureSeeded() {
         if (!sessions.exists(DEMO_QUOTE_ID)) {
-            sessions.put(new QuoteRecord(DEMO_QUOTE_ID, DEMO_SESSION_ID, buildDemoData()));
+            Map<String, Object> data = buildDemoData();
+            Map<String, Object> pricingObject = pricing.price(data);
+            data.put("pricing", pricingObject);
+            data.put("currentOutcome", pricingObject.get("outcome"));
+            sessions.put(new QuoteRecord(DEMO_QUOTE_ID, DEMO_SESSION_ID, data));
         }
         return sessions.get(DEMO_QUOTE_ID, DEMO_SESSION_ID);
     }
@@ -122,8 +134,7 @@ public class DemoSeeder {
         ));
         data.put("namedDrivers", new ArrayList<>());
         data.put("marketing", map("email", true, "telephone", false, "sms", false));
-        // Pricing is written by the rating engine in a later slice — placeholder.
-        data.put("pricing", null);
+        // Pricing is computed on seed (see ensureSeeded) so the demo is pre-priced.
         return data;
     }
 }
