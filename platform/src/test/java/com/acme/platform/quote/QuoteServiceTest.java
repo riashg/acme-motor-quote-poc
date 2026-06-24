@@ -25,8 +25,9 @@ class QuoteServiceTest {
     void setUp() {
         events = new EventStore();
         sessions = new SessionStore();
-        PricingService pricing = new PricingService(new MockVendorClient(), new UnderwritingEngine());
-        service = new QuoteService(sessions, events, pricing);
+        MockVendorClient vendor = new MockVendorClient();
+        PricingService pricing = new PricingService(vendor, new UnderwritingEngine());
+        service = new QuoteService(sessions, events, pricing, vendor);
     }
 
     @Test

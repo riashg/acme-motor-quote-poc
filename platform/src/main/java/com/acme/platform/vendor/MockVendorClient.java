@@ -1,10 +1,13 @@
 package com.acme.platform.vendor;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -190,6 +193,39 @@ public class MockVendorClient implements VendorClient {
         }
 
         return new RatingResult(premium, breakdown);
+    }
+
+    /**
+     * Issue a deterministic, synthetic policy (Slice 8): a policy number with the
+     * neutral {@code ACME-POL-} prefix plus a short id, status {@code ISSUED},
+     * and an effective date taken from the quote's cover start date (or today if
+     * absent/unparseable). No real brand, plate, or vehicle data.
+     *
+     * <p>This is the value a real insurer would obtain from the vendor over SOAP;
+     * a future {@code SoapVendorClient.issuePolicy(...)} would return the same
+     * {@link PolicyResult} shape. <b>Real issuance and payments stay out of scope
+     * (brief §2)</b> — only this seam is visible.
+     */
+    @Override
+    public PolicyResult issuePolicy(Map<String, Object> quoteData) {
+        Map<String, Object> data = quoteData == null ? Map.of() : quoteData;
+        Map<String, Object> cover = section(data, "cover");
+
+        String effectiveDate = coverStartDate(cover.get("coverStartDate"));
+        String shortId = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        return new PolicyResult("ACME-POL-" + shortId, "ISSUED", effectiveDate);
+    }
+
+    /** The cover start date if it parses as ISO {@code yyyy-MM-dd}, else today. */
+    private static String coverStartDate(Object value) {
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return LocalDate.parse(s.strip()).toString();
+            } catch (DateTimeParseException ignored) {
+                // fall through to today
+            }
+        }
+        return LocalDate.now().toString();
     }
 
     @SuppressWarnings("unchecked")

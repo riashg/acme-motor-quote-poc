@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.acme.platform.events.ApiActivity;
+import com.acme.platform.purchase.PurchaseLinkService;
 import com.acme.platform.quote.DemoSeeder;
 import com.acme.platform.quote.QuoteService;
 import com.acme.platform.quote.QuoteService.PriceResult;
+import com.acme.platform.quote.QuoteService.PurchaseResult;
 import com.acme.platform.vendor.VendorClient;
 
 /**
@@ -38,12 +41,21 @@ public class PlatformController {
     private final VendorClient vendor;
     private final ApiActivity api;
     private final DemoSeeder demo;
+    private final PurchaseLinkService purchaseLinks;
+    private final String publicBaseUrl;
 
-    public PlatformController(QuoteService quotes, VendorClient vendor, ApiActivity api, DemoSeeder demo) {
+    public PlatformController(QuoteService quotes, VendorClient vendor, ApiActivity api, DemoSeeder demo,
+                              PurchaseLinkService purchaseLinks,
+                              @Value("${platform.public-base-url:http://localhost:8070}") String publicBaseUrl) {
         this.quotes = quotes;
         this.vendor = vendor;
         this.api = api;
         this.demo = demo;
+        this.purchaseLinks = purchaseLinks;
+        // Trim any trailing slash so purchaseUrl is well-formed.
+        this.publicBaseUrl = publicBaseUrl.endsWith("/")
+            ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1)
+            : publicBaseUrl;
     }
 
     @GetMapping("/health")
@@ -150,6 +162,80 @@ public class PlatformController {
             case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quote not found");
             case INCOMPLETE -> ResponseEntity.unprocessableEntity().body(response);
             case PRICED -> ResponseEntity.ok(response);
+        };
+    }
+
+    /**
+     * Mint a purchase link for a cleanly-priced quote (Slice 7). Requires
+     * X-Session-Id; 404 on unknown id or mismatch. 409 if the quote isn't
+     * cleanly priced (outcome != quote) — can't purchase a refer/decline/unpriced
+     * quote. On success returns {@code {purchaseToken, purchaseUrl}} where the URL
+     * is {@code <publicBaseUrl>/purchase/<token>}; emits PURCHASE_LINK_GENERATED.
+     */
+    @PostMapping("/quotes/{quoteId}/purchase-link")
+    public ResponseEntity<Map<String, Object>> purchaseLink(
+        @PathVariable String quoteId,
+        @RequestHeader(name = "X-Session-Id", required = false) String sessionId
+    ) {
+        if (DemoSeeder.DEMO_QUOTE_ID.equals(quoteId)) {
+            demo.ensureSeeded();
+        }
+        PurchaseResult result = quotes.mintPurchaseLink(
+            quoteId, sessionId == null ? "" : sessionId, purchaseLinks::mintToken);
+
+        Map<String, Object> response = switch (result.status()) {
+            case NOT_FOUND -> Map.of("error", "not_found");
+            case NOT_QUOTE -> Map.of("error", "not_purchasable");
+            case OK -> {
+                String token = (String) result.value().get("purchaseToken");
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("purchaseToken", token);
+                body.put("purchaseUrl", publicBaseUrl + "/purchase/" + token);
+                yield body;
+            }
+        };
+
+        // API layer: log request + response. Never the sessionId; the token is the
+        // capability for the (separate) landing page, so it may appear in the API log.
+        api.record("purchase_link", Map.of("quoteId", quoteId), response);
+
+        return switch (result.status()) {
+            case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quote not found");
+            case NOT_QUOTE -> ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+            case OK -> ResponseEntity.ok(response);
+        };
+    }
+
+    /**
+     * Issue a (mock) policy for a cleanly-priced quote (Slice 8). Requires
+     * X-Session-Id; 404 on unknown id or mismatch. 409 if the quote isn't cleanly
+     * priced (outcome != quote). Issues via the vendor SOAP seam, stores the
+     * policy on the quote, advances journeyState to {@code policy_issued}, emits
+     * POLICY_CREATED, and returns the policy details. Real issuance/payments stay
+     * out of scope (brief §2) — only the seam is visible.
+     */
+    @PostMapping("/quotes/{quoteId}/issue-policy")
+    public ResponseEntity<Map<String, Object>> issuePolicy(
+        @PathVariable String quoteId,
+        @RequestHeader(name = "X-Session-Id", required = false) String sessionId
+    ) {
+        if (DemoSeeder.DEMO_QUOTE_ID.equals(quoteId)) {
+            demo.ensureSeeded();
+        }
+        PurchaseResult result = quotes.issuePolicy(quoteId, sessionId == null ? "" : sessionId);
+
+        Map<String, Object> response = switch (result.status()) {
+            case NOT_FOUND -> Map.of("error", "not_found");
+            case NOT_QUOTE -> Map.of("error", "not_issuable");
+            case OK -> result.value();
+        };
+
+        api.record("issue_policy", Map.of("quoteId", quoteId), response);
+
+        return switch (result.status()) {
+            case NOT_FOUND -> throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quote not found");
+            case NOT_QUOTE -> ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+            case OK -> ResponseEntity.ok(response);
         };
     }
 

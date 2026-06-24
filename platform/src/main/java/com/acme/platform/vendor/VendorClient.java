@@ -37,4 +37,21 @@ public interface VendorClient {
      * @return the rated premium and its {@code {label, amount}} breakdown lines
      */
     RatingResult rate(Map<String, Object> quoteData);
+
+    /**
+     * Issue a policy from a priced quote (Slice 8): bind the quote into a
+     * policy and return the issued {@code policyNumber}, {@code status}, and
+     * {@code effectiveDate}. In a real insurer this is a vendor call
+     * <b>over SOAP</b> (a future {@code SoapVendorClient.issuePolicy(...)}
+     * behind this same seam), so callers depend only on this interface, never
+     * on the transport.
+     *
+     * <p>{@link MockVendorClient#issuePolicy} implements it with a deterministic
+     * synthetic policy. <b>Real issuance and payments stay out of scope
+     * (brief §2)</b> — only the seam is visible.
+     *
+     * @param quoteData the whole-model quote payload (nested maps)
+     * @return the issued policy: {@code {policyNumber, status, effectiveDate}}
+     */
+    PolicyResult issuePolicy(Map<String, Object> quoteData);
 }

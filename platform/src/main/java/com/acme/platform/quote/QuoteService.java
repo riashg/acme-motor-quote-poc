@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 
 import com.acme.platform.events.EventStore;
 import com.acme.platform.pricing.PricingService;
+import com.acme.platform.vendor.PolicyResult;
+import com.acme.platform.vendor.VendorClient;
 
 /**
  * Quote service — session-scoped create / get / update (brief §6, §9, §17.4).
@@ -25,14 +27,19 @@ import com.acme.platform.pricing.PricingService;
 @Service
 public class QuoteService {
 
+    /** The clean-quote outcome: only a quote with this outcome can be purchased / issued. */
+    static final String OUTCOME_QUOTE = "quote";
+
     private final SessionStore sessions;
     private final EventStore events;
     private final PricingService pricing;
+    private final VendorClient vendor;
 
-    public QuoteService(SessionStore sessions, EventStore events, PricingService pricing) {
+    public QuoteService(SessionStore sessions, EventStore events, PricingService pricing, VendorClient vendor) {
         this.sessions = sessions;
         this.events = events;
         this.pricing = pricing;
+        this.vendor = vendor;
     }
 
     /** Create a draft quote bound to a fresh session. Emits {@code QUOTE_CREATED}. */
@@ -122,6 +129,131 @@ public class QuoteService {
         return new PriceResult(PriceStatus.PRICED, state(record), pricingObject);
     }
 
+    /**
+     * Status of a purchase / issuance request:
+     * <ul>
+     *   <li>{@code NOT_FOUND} — unknown quote or session mismatch.</li>
+     *   <li>{@code NOT_QUOTE} — the quote isn't cleanly priced (outcome != quote),
+     *       so it can't be purchased / issued.</li>
+     *   <li>{@code OK} — proceeded.</li>
+     * </ul>
+     */
+    public enum PurchaseStatus { NOT_FOUND, NOT_QUOTE, OK }
+
+    /** Result of {@link #mintPurchaseLink} / {@link #issuePolicy}: status + a value map. */
+    public record PurchaseResult(PurchaseStatus status, Map<String, Object> value) {
+    }
+
+    /**
+     * Mint a purchase token for a <b>cleanly-priced</b> quote (Slice 7):
+     * session-gated, and only if {@code currentOutcome == quote}. Stores
+     * {@code token → quoteId} via the supplied {@code tokenMinter} and emits
+     * {@code PURCHASE_LINK_GENERATED} ({@code quoteId} only — no token, no
+     * sessionId).
+     *
+     * <ul>
+     *   <li>Unknown quote or session mismatch → {@code NOT_FOUND}.</li>
+     *   <li>Not cleanly priced (outcome != quote) → {@code NOT_QUOTE}.</li>
+     *   <li>Otherwise → {@code OK} with {@code {purchaseToken}} in the value map.</li>
+     * </ul>
+     *
+     * @param tokenMinter mints + stores a token for the quoteId (the capability)
+     */
+    public PurchaseResult mintPurchaseLink(String quoteId, String sessionId,
+                                           java.util.function.Function<String, String> tokenMinter) {
+        QuoteRecord record = sessions.get(quoteId, sessionId);
+        if (record == null) {
+            return new PurchaseResult(PurchaseStatus.NOT_FOUND, null);
+        }
+        if (!isCleanlyPriced(record.data())) {
+            return new PurchaseResult(PurchaseStatus.NOT_QUOTE, null);
+        }
+        String token = tokenMinter.apply(record.quoteId());
+        events.append("PURCHASE_LINK_GENERATED", Map.of("quoteId", record.quoteId()), "domain");
+        return new PurchaseResult(PurchaseStatus.OK, Map.of("purchaseToken", token));
+    }
+
+    /**
+     * Issue a (mock) policy for a <b>cleanly-priced</b> quote (Slice 8):
+     * session-gated, and only if {@code currentOutcome == quote}. Issues via the
+     * vendor SOAP seam ({@link VendorClient#issuePolicy}), stores the policy on
+     * the quote under {@code policy}, advances {@code journeyState} to
+     * {@code policy_issued}, and emits {@code POLICY_CREATED}
+     * ({@code quoteId} + {@code policyNumber} — no sessionId).
+     *
+     * <ul>
+     *   <li>Unknown quote or session mismatch → {@code NOT_FOUND}.</li>
+     *   <li>Not cleanly priced (outcome != quote) → {@code NOT_QUOTE}.</li>
+     *   <li>Otherwise → {@code OK} with the policy {@code {policyNumber, status,
+     *       effectiveDate}} in the value map.</li>
+     * </ul>
+     */
+    public PurchaseResult issuePolicy(String quoteId, String sessionId) {
+        QuoteRecord record = sessions.get(quoteId, sessionId);
+        if (record == null) {
+            return new PurchaseResult(PurchaseStatus.NOT_FOUND, null);
+        }
+        if (!isCleanlyPriced(record.data())) {
+            return new PurchaseResult(PurchaseStatus.NOT_QUOTE, null);
+        }
+
+        // Issuance is a value obtained from the vendor over SOAP (mock here).
+        PolicyResult policy = vendor.issuePolicy(record.data());
+
+        Map<String, Object> policySection = new LinkedHashMap<>();
+        policySection.put("policyNumber", policy.policyNumber());
+        policySection.put("status", policy.status());
+        policySection.put("effectiveDate", policy.effectiveDate());
+
+        // Persist onto the quote + advance the journey to policy_issued.
+        record.data().put("policy", policySection);
+        record.data().put("policyIssued", true);
+
+        Map<String, Object> eventPayload = new LinkedHashMap<>();
+        eventPayload.put("quoteId", record.quoteId());
+        eventPayload.put("policyNumber", policy.policyNumber());
+        events.append("POLICY_CREATED", eventPayload, "domain");
+
+        return new PurchaseResult(PurchaseStatus.OK, policySection);
+    }
+
+    /**
+     * Landing-page view for the strict GUID landing page (Slice 7, brief §17.6):
+     * resolve <b>only</b> the quoteId — no session, no ambient fallback — and
+     * return the rendered fields <b>only if</b> the quote exists AND is cleanly
+     * priced ({@code outcome == quote}); otherwise {@code null} ("Quote not
+     * found"). Returns just what the page renders: vehicle, premium, monthly,
+     * excess, outcome.
+     */
+    public Map<String, Object> landingView(String quoteId) {
+        QuoteRecord record = sessions.lookup(quoteId);
+        if (record == null || !isCleanlyPriced(record.data())) {
+            return null;
+        }
+        Map<String, Object> data = record.data();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pricing = (data.get("pricing") instanceof Map)
+            ? (Map<String, Object>) data.get("pricing") : Map.of();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> vehicle = (data.get("vehicle") instanceof Map)
+            ? (Map<String, Object>) data.get("vehicle") : Map.of();
+
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("quoteId", record.quoteId());
+        view.put("vehicle", vehicle);
+        view.put("annualPremium", pricing.get("annualPremium"));
+        view.put("currency", pricing.get("currency"));
+        view.put("monthly", pricing.get("monthly"));
+        view.put("totalExcess", pricing.get("totalExcess"));
+        view.put("outcome", data.get("currentOutcome"));
+        return view;
+    }
+
+    /** A quote is cleanly priced iff its {@code currentOutcome} is {@code quote}. */
+    private static boolean isCleanlyPriced(Map<String, Object> data) {
+        return data != null && OUTCOME_QUOTE.equals(data.get("currentOutcome"));
+    }
+
     /** Build the brief §6 state object. Never includes the sessionId. */
     private Map<String, Object> state(QuoteRecord record) {
         Map<String, Object> data = record.data();
@@ -137,6 +269,11 @@ public class QuoteService {
         if (pricingObject != null) {
             state.put("pricing", pricingObject);
         }
+        // Surface the issued policy (if any) so GET /quotes/{id} reflects it.
+        Object policy = data.get("policy");
+        if (policy != null) {
+            state.put("policy", policy);
+        }
         return state;
     }
 
@@ -145,9 +282,14 @@ public class QuoteService {
      * {@code quote_started} (nothing collected) →
      * {@code collecting} (some data, gaps) →
      * {@code ready_to_price} (no mandatory fields remain) →
-     * {@code quoted}/{@code referred}/{@code declined} (priced, from the outcome).
+     * {@code quoted}/{@code referred}/{@code declined} (priced, from the outcome) →
+     * {@code policy_issued} (a mock policy has been issued, Slice 8).
      */
     private static String journeyState(Map<String, Object> data, List<String> missing, String currentOutcome) {
+        // Once a (mock) policy is issued the journey is complete (Slice 8).
+        if (data != null && Boolean.TRUE.equals(data.get("policyIssued"))) {
+            return "policy_issued";
+        }
         if (currentOutcome != null) {
             return PricingService.journeyStateFor(currentOutcome);
         }

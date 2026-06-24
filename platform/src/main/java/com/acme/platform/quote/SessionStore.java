@@ -74,6 +74,18 @@ public class SessionStore {
         return record;
     }
 
+    /**
+     * Resolve a record by quote id <b>without</b> a session, for the strict GUID
+     * purchase/quote landing page (brief §17.6). The capability is the
+     * high-entropy purchase token in the URL (resolved upstream to this id), not
+     * the session; this never reveals or compares the session id. Returns
+     * {@code null} for an unknown id. Do <b>not</b> use on the session-gated
+     * quote routes — those must go through {@link #get}.
+     */
+    public QuoteRecord lookup(String quoteId) {
+        return records.get(quoteId);
+    }
+
     public boolean exists(String quoteId) {
         return records.containsKey(quoteId);
     }

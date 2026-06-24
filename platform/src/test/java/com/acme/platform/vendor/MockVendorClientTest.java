@@ -130,4 +130,34 @@ class MockVendorClientTest {
             .sum();
         assertThat(sum).isCloseTo(r.annualPremium(), within(0.001));
     }
+
+    // ---------------------------------------------------------------------
+    // Mock policy issuance via the vendor seam (Slice 8). Real issuance/payments
+    // stay out of scope (brief §2) — only the seam is exercised here.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void issuePolicyReturnsSyntheticIssuedPolicyWithCoverStartDate() {
+        Map<String, Object> data = baseQuote();
+        data.put("cover", new LinkedHashMap<>(Map.of("coverStartDate", "2026-07-01")));
+
+        PolicyResult policy = vendor.issuePolicy(data);
+        assertThat(policy.policyNumber()).startsWith("ACME-POL-");
+        assertThat(policy.status()).isEqualTo("ISSUED");
+        assertThat(policy.effectiveDate()).isEqualTo("2026-07-01");
+    }
+
+    @Test
+    void issuePolicyDefaultsEffectiveDateToTodayWhenCoverStartAbsentOrBad() {
+        PolicyResult policy = vendor.issuePolicy(baseQuote()); // no coverStartDate
+        assertThat(policy.effectiveDate()).isEqualTo(LocalDate.now().toString());
+        assertThat(policy.policyNumber()).startsWith("ACME-POL-");
+    }
+
+    @Test
+    void issuePolicyMintsDistinctPolicyNumbers() {
+        PolicyResult a = vendor.issuePolicy(baseQuote());
+        PolicyResult b = vendor.issuePolicy(baseQuote());
+        assertThat(a.policyNumber()).isNotEqualTo(b.policyNumber());
+    }
 }
