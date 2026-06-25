@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>ACME Motor Quote</title>
+  <style>
+    :root {
+      --acme-blue: #16357a;
+      --acme-red: #c0392b;
+      --acme-card: #ffffff;
+      --acme-border: #e0e0ef;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1a1a1a;
+      background: transparent;
+    }
+    .card {
+      background: var(--acme-card);
+      border: 1px solid var(--acme-border);
+      border-left: 6px solid var(--acme-blue);
+      border-radius: 10px;
+      padding: 16px;
+      margin: 8px 0;
+      max-width: 460px;
+    }
+    .card.decline { border-left-color: var(--acme-red); }
+    .brand { color: var(--acme-blue); font-weight: 700; }
+    .brand.decline { color: var(--acme-red); }
+    .premium { font-size: 32px; font-weight: 800; margin: 8px 0; }
+    .premium .per { font-size: 14px; font-weight: 400; }
+    .monthly { color: var(--acme-blue); font-size: 14px; }
+    .section-label { font-size: 12px; font-weight: 700; opacity: 0.5; margin: 12px 0 4px; }
+    .row { display: flex; justify-content: space-between; font-size: 13px; margin: 2px 0; }
+    .row span { opacity: 0.7; }
+    .reasons { margin: 8px 0; padding-left: 18px; font-size: 13px; }
+    .explain { font-size: 14px; margin: 8px 0; }
+    .disclaimer { font-size: 11px; opacity: 0.6; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    // --- Mock fallback: the clean £430 quote used across the project. Rendered
+    // immediately so the widget is useful even with no host (standalone), and
+    // replaced by live data if an ext-apps host pushes a tool-result.
+    var MOCK_QUOTE = {
+      annualPremium: 430.0,
+      currency: "GBP",
+      iptIncluded: true,
+      monthly: { deposit: 43.0, instalment: 43.0, instalments: 10 },
+      compulsoryExcess: 350,
+      voluntaryExcess: 250,
+      totalExcess: 600,
+      ncdYears: 5,
+      outcome: "quote",
+      reasons: [],
+      breakdown: [
+        { label: "Base premium", amount: 350.0 },
+        { label: "Comprehensive cover", amount: 80.0 }
+      ]
+    };
+
+    function money(currency, amount) {
+      var symbol = (currency === "GBP" || !currency) ? "£" : currency + " ";
+      if (amount === undefined || amount === null) return "";
+      var n = Number(amount);
+      return n === Math.trunc(n) ? symbol + n : symbol + n.toFixed(2);
+    }
+
+    function el(tag, attrs, children) {
+      var node = document.createElement(tag);
+      attrs = attrs || {};
+      Object.keys(attrs).forEach(function (k) {
+        if (k === "class") node.className = attrs[k];
+        else if (k === "text") node.textContent = attrs[k];
+        else node.setAttribute(k, attrs[k]);
+      });
+      (children || []).forEach(function (c) { node.appendChild(c); });
+      return node;
+    }
+
+    function render(pricing) {
+      var root = document.getElementById("root");
+      root.innerHTML = "";
+      if (!pricing) { render(MOCK_QUOTE); return; }
+
+      var disclaimer = el("div", {
+        class: "disclaimer",
+        text: "Illustrative demo — mock data only, not a real or binding ACME quote."
+      });
+
+      // Refer / decline variant.
+      if (pricing.outcome && pricing.outcome !== "quote") {
+        var card = el("div", { class: "card decline" });
+        card.appendChild(el("div", {
+          class: "brand decline",
+          text: pricing.outcome === "refer" ? "Referred to an adviser" : "We can't offer cover"
+        }));
+        if (pricing.explanation) {
+          card.appendChild(el("div", { class: "explain", text: pricing.explanation }));
+        }
+        if (pricing.reasons && pricing.reasons.length) {
+          var ul = el("ul", { class: "reasons" });
+          pricing.reasons.forEach(function (r) { ul.appendChild(el("li", { text: r })); });
+          card.appendChild(ul);
+        }
+        card.appendChild(disclaimer);
+        root.appendChild(card);
+        return;
+      }
+
+      // Clean quote.
+      var card = el("div", { class: "card" });
+      card.appendChild(el("div", { class: "brand", text: "ACME Motor Quote" }));
+
+      var premium = el("div", { class: "premium" });
+      premium.appendChild(document.createTextNode(money(pricing.currency, pricing.annualPremium)));
+      premium.appendChild(el("span", { class: "per", text: " /year" }));
+      card.appendChild(premium);
+
+      var m = pricing.monthly;
+      if (m && m.instalment !== undefined && m.instalment !== null) {
+        card.appendChild(el("div", {
+          class: "monthly",
+          text: money(pricing.currency, m.instalment) + " /month over " + m.instalments + " instalments"
+        }));
+      }
+
+      if (pricing.breakdown && pricing.breakdown.length) {
+        card.appendChild(el("div", { class: "section-label", text: "Breakdown" }));
+        pricing.breakdown.forEach(function (line) {
+          var row = el("div", { class: "row" });
+          row.appendChild(el("span", { text: line.label }));
+          row.appendChild(el("strong", { text: money(pricing.currency, line.amount) }));
+          card.appendChild(row);
+        });
+      }
+
+      if (pricing.totalExcess !== undefined && pricing.totalExcess !== null) {
+        card.appendChild(el("div", { class: "section-label", text: "Excess & no-claims" }));
+        var ex = el("div", { class: "row" });
+        ex.appendChild(el("span", {
+          text: "Total excess (£" + pricing.compulsoryExcess + " compulsory + £" + pricing.voluntaryExcess + " voluntary)"
+        }));
+        ex.appendChild(el("strong", { text: money(pricing.currency, pricing.totalExcess) }));
+        card.appendChild(ex);
+        if (pricing.ncdYears !== undefined && pricing.ncdYears !== null) {
+          var ncd = el("div", { class: "row" });
+          ncd.appendChild(el("span", { text: "No-claims discount" }));
+          ncd.appendChild(el("strong", { text: pricing.ncdYears + " years" }));
+          card.appendChild(ncd);
+        }
+      }
+
+      card.appendChild(disclaimer);
+      root.appendChild(card);
+    }
+
+    // --- Host bridge (MCP Apps, spec 2026-01-26). Raw JSON-RPC over postMessage,
+    // no SDK dependency. The host pushes the tool's result as a
+    // `ui/notifications/tool-result` notification carrying `structuredContent`.
+    // If there's no host (opened standalone), the mock simply stays rendered.
+    function pricingFromToolResult(params) {
+      if (!params) return null;
+      if (params.structuredContent) return params.structuredContent;
+      if (params.result && params.result.structuredContent) return params.result.structuredContent;
+      return null;
+    }
+
+    var rpcId = 0;
+    function notifyParent(method, params) {
+      if (window.parent === window) return;
+      window.parent.postMessage({ jsonrpc: "2.0", method: method, params: params || {} }, "*");
+    }
+    function requestParent(method, params) {
+      if (window.parent === window) return;
+      rpcId += 1;
+      window.parent.postMessage({ jsonrpc: "2.0", id: rpcId, method: method, params: params || {} }, "*");
+    }
+
+    window.addEventListener("message", function (event) {
+      var msg = event.data;
+      if (!msg || msg.jsonrpc !== "2.0") return;
+      // Handshake: once the host answers ui/initialize, declare ourselves ready.
+      if (msg.id !== undefined && msg.result !== undefined) {
+        notifyParent("ui/notifications/initialized", {});
+        return;
+      }
+      if (msg.method === "ui/notifications/tool-result") {
+        var pricing = pricingFromToolResult(msg.params);
+        if (pricing) render(pricing);
+      }
+    });
+
+    // Render the mock first (instant, host-independent), then begin the handshake.
+    render(MOCK_QUOTE);
+    requestParent("ui/initialize", {});
+  </script>
+</body>
+</html>

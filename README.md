@@ -71,6 +71,8 @@ PLATFORM_URL=http://localhost:8070 uv run python -m app.server   # streamable-HT
 ```
 The web app talks to the platform directly; the MCP is what a ChatGPT app connects to.
 
+The MCP server also exposes an **MCP Apps UI widget** ([ext-apps](https://github.com/modelcontextprotocol/ext-apps) spec): a `display_quote_card` demo tool linked to the `ui://acme-motor-quote/quote-card.html` resource, so an ext-apps-aware host renders a styled quote card (mock data) instead of raw JSON. The card also reads live pricing if the host pushes a `ui/notifications/tool-result`. Open `mcp-server/app/widgets/quote_card.html` in a browser to preview it standalone.
+
 **Live LLM mode:** set `OPENAI_API_KEY` and omit `MOCK_LLM` (backend uses OpenAI for extraction/collection; vision for documents).
 
 ## Tests

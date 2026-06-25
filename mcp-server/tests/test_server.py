@@ -8,6 +8,8 @@ id flows through get/update.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from app import server
@@ -149,3 +151,42 @@ def test_tools_are_registered_with_expected_annotations():
     assert tools["issue_policy"].annotations.openWorldHint is True
     # issuing a policy is not idempotent.
     assert tools["issue_policy"].annotations.idempotentHint is False
+
+
+# --- MCP Apps quote-card UI widget (ext-apps spec 2026-01-26).
+
+
+def test_display_quote_card_returns_mock_pricing():
+    result = server.display_quote_card()
+    assert result["outcome"] == "quote"
+    assert result["annualPremium"] == 430.0
+    assert result["breakdown"][0]["label"] == "Base premium"
+
+
+def test_display_quote_card_tool_links_to_ui_resource():
+    tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
+    assert "display_quote_card" in tools
+    # The tool→UI link the host reads to render the widget.
+    assert tools["display_quote_card"].meta == {"ui": {"resourceUri": server._QUOTE_CARD_URI}}
+    assert tools["display_quote_card"].annotations.readOnlyHint is True
+
+
+def test_quote_card_resource_is_registered_with_app_mime():
+    resources = {str(r.uri): r for r in server.mcp._resource_manager.list_resources()}
+    assert server._QUOTE_CARD_URI in resources
+    assert resources[server._QUOTE_CARD_URI].mime_type == "text/html;profile=mcp-app"
+
+
+def test_quote_card_widget_returns_html():
+    html = server.quote_card_widget()
+    assert "ACME Motor Quote" in html
+    # The host-bridge notification the widget listens for (live data path).
+    assert "ui/notifications/tool-result" in html
+
+
+def test_display_quote_card_emits_structured_content():
+    # The host forwards structuredContent to the widget; FastMCP must populate it
+    # (the dict[str, Any] return annotation is what makes it structured).
+    content, structured = asyncio.run(server.mcp.call_tool("display_quote_card", {}))
+    assert structured["outcome"] == "quote"
+    assert structured["annualPremium"] == 430.0

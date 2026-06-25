@@ -19,6 +19,9 @@ premiums, cover or outcomes.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
@@ -70,6 +73,38 @@ mcp = FastMCP(
 
 # Module-level platform client (tests monkeypatch this with a fake).
 _platform = PlatformClient()
+
+# --- MCP Apps UI widget (ext-apps spec 2026-01-26) ----------------------------
+# A tool can declare a UI resource; an ext-apps-aware host fetches the HTML and
+# renders it in a sandboxed iframe, then pushes the tool result to it. The HTML
+# is host-agnostic and talks raw JSON-RPC over postMessage (no SDK dependency).
+_UI_MIME = "text/html;profile=mcp-app"  # ext-apps RESOURCE_MIME_TYPE
+_QUOTE_CARD_URI = "ui://acme-motor-quote/quote-card.html"
+_WIDGETS_DIR = Path(__file__).parent / "widgets"
+
+# A clean £430 sample quote (base £350 + comprehensive £80) — the same shape the
+# platform's price tool returns, so the widget renders mock or live data alike.
+_MOCK_PRICING = {
+    "annualPremium": 430.0,
+    "currency": "GBP",
+    "iptIncluded": True,
+    "monthly": {"deposit": 43.0, "instalment": 43.0, "instalments": 10},
+    "compulsoryExcess": 350,
+    "voluntaryExcess": 250,
+    "totalExcess": 600,
+    "ncdYears": 5,
+    "outcome": "quote",
+    "reasons": [],
+    "breakdown": [
+        {"label": "Base premium", "amount": 350.0},
+        {"label": "Comprehensive cover", "amount": 80.0},
+    ],
+}
+
+
+def _load_widget(name: str) -> str:
+    """Read a widget's HTML from app/widgets (per-call, so edits show live)."""
+    return (_WIDGETS_DIR / name).read_text(encoding="utf-8")
 
 
 def start_motor_quote() -> dict:
@@ -142,6 +177,29 @@ def lookup_address(postcode: str) -> dict:
     return _platform.lookup_address(postcode)
 
 
+def display_quote_card(quote_id: str | None = None) -> dict[str, Any]:
+    """Return a sample motor quote and render it in the quote-card UI widget.
+
+    A demo of the MCP Apps UI surface: the returned pricing object is delivered
+    to the linked ``ui://acme-motor-quote/quote-card.html`` widget as structured
+    output (the ``dict[str, Any]`` return makes FastMCP emit ``structuredContent``,
+    which the widget reads from the host's ``tool-result`` notification). Mock
+    data only — not a real or binding quote.
+    """
+    return dict(_MOCK_PRICING)
+
+
+@mcp.resource(
+    _QUOTE_CARD_URI,
+    name="quote-card",
+    title="ACME quote card",
+    mime_type=_UI_MIME,
+)
+def quote_card_widget() -> str:
+    """The HTML for the quote-card UI widget (MCP Apps UI resource)."""
+    return _load_widget("quote_card.html")
+
+
 # Register tools with Apps-SDK annotations. Reads are read-only; start/update
 # change state (non-read-only). start/lookups reach beyond the closed model
 # (the platform / vendor seam), so they are open-world.
@@ -202,6 +260,12 @@ mcp.tool(
         title="Look up address", readOnlyHint=True, openWorldHint=True
     )
 )(lookup_address)
+# Linked to its UI widget via _meta.ui.resourceUri (MCP Apps): a capable host
+# renders the quote card instead of raw JSON.
+mcp.tool(
+    annotations=ToolAnnotations(title="Display quote card", readOnlyHint=True),
+    meta={"ui": {"resourceUri": _QUOTE_CARD_URI}},
+)(display_quote_card)
 
 
 def main() -> None:
