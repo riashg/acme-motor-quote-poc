@@ -172,3 +172,32 @@ async def test_full_patch_reaches_ready_to_price(monkeypatch):
     assert state["journeyState"] == "ready_to_price"
     assert state["missingFields"] == []
     assert any("ready" in e.get("data", "") for e in events if e["type"] == "text")
+
+
+@pytest.mark.asyncio
+async def test_autofill_completes_in_one_turn(monkeypatch):
+    # MOCK_AUTOFILL demo fast-path: even an empty extraction ("type anything")
+    # reaches ready_to_price in a single turn.
+    service = FakeQuoteService()
+    session = await _session(service)
+    monkeypatch.setattr("app.agent.extract_patch", _stub_extract({}))
+
+    events = await _run(collect_turn("hello", session, service, autofill=True))
+    state = await service.get(session["quoteId"], session["sessionId"])
+    assert state["journeyState"] == "ready_to_price"
+    assert state["missingFields"] == []
+    assert any("ready" in e.get("data", "") for e in events if e["type"] == "text")
+
+
+@pytest.mark.asyncio
+async def test_autofill_preserves_typed_value(monkeypatch):
+    # Gap-fill must not overwrite what the customer actually said.
+    service = FakeQuoteService()
+    session = await _session(service)
+    monkeypatch.setattr("app.agent.extract_patch", _stub_extract({"vehicle": {"annualMileage": 15000}}))
+
+    await _run(collect_turn("I drive 15000 miles", session, service, autofill=True))
+    state = await service.get(session["quoteId"], session["sessionId"])
+    assert state["journeyState"] == "ready_to_price"
+    # The typed mileage stands; the sample's 8000 did not clobber it.
+    assert session["current"]["vehicle"]["annualMileage"] == 15000

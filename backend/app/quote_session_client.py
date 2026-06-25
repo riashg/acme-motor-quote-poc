@@ -139,6 +139,97 @@ def deep_merge(base: dict, patch: dict) -> dict:
     return base
 
 
+# --- Demo fast-path (MOCK_AUTOFILL=1) -------------------------------------------
+# A complete, internally-consistent synthetic quote that prices to a clean
+# "quote" outcome (£430: base £350 + comprehensive £80; no other loadings). Used
+# only to fill the gaps a customer hasn't answered yet, so the whole model
+# completes in one turn and the frontend can reach a priced quote without the
+# full collection loop. Mirrors the test helper ``_complete_patch``. Synthetic
+# only — no real person, vehicle, or address.
+COMPLETE_SAMPLE: dict = {
+    "vehicle": {
+        "registration": "FX19ZTC",
+        "make": "Ford",
+        "model": "Focus",
+        "datePurchased": {"month": 6, "year": 2021},
+        "value": 12000,
+        "useOfVehicle": "Social + commuting",
+        "security": "Factory-fitted",
+        "dashcam": False,
+        "modified": False,
+        "imported": "No",
+        "daytimeLocation": "Drive",
+        "overnightLocation": "Drive",
+        "annualMileage": 8000,
+        "registeredKeeper": True,
+        "legalOwner": True,
+    },
+    "customer": {
+        "title": "Mr",
+        "firstName": "Sam",
+        "surname": "Sample",
+        "dateOfBirth": "1990-01-01",
+        "maritalStatus": "Married",
+        "childrenUnder16": 0,
+        "employmentStatus": "Employed",
+        "partTimeJob": False,
+        "yearsLivedInUK": "Since birth",
+        "address": {"houseNumberOrName": "1", "postcode": "RG1 1AA"},
+        "ownsProperty": True,
+        "carKeptOvernightAtAddress": True,
+        "email": "sam.sample@example.com",
+    },
+    "driver": {
+        "licenceType": "Full UK",
+        "licenceHeldFor": 10,
+        "insuranceCancelledOrVoid": False,
+        "ncdYears": 5,
+        "ncdOnCompanyCar": False,
+    },
+    "history": {
+        "claimsLast3Years": 0,
+        "offencesLast5Years": 0,
+        "unspentCriminalConvictions": False,
+    },
+    "household": {
+        "carsInHousehold": 1,
+        "anotherCarHasCover": False,
+        "regularUseOfOtherVehicles": "None",
+    },
+    "cover": {
+        "paymentMethod": "Single payment",
+        "coverLevel": "Comprehensive",
+        "coverStartDate": "2026-07-01",
+        "voluntaryExcess": 250,
+    },
+}
+
+
+def _set_path(target: dict, path: str, value: Any) -> None:
+    """Set ``value`` at a dot-path inside ``target``, creating nested dicts."""
+    parts = path.split(".")
+    node = target
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = value
+
+
+def gap_fill_patch(current: dict) -> dict:
+    """Build a patch that fills only the currently-absent mandatory fields from
+    ``COMPLETE_SAMPLE`` — never overwrites a value the customer already gave.
+
+    Used by the ``MOCK_AUTOFILL`` demo fast-path so the whole model completes in
+    a single turn while preserving anything the customer actually typed.
+    """
+    patch: dict = {}
+    for path in missing_fields(current):
+        value = _resolve(COMPLETE_SAMPLE, path)
+        if value is None:
+            continue
+        _set_path(patch, path, value)
+    return patch
+
+
 @runtime_checkable
 class QuoteService(Protocol):
     """Async seam onto the platform's quote tools (brief §6, §8)."""

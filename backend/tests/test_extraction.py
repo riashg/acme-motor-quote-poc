@@ -47,3 +47,49 @@ def test_bare_reply_with_anchor_still_extracts_volunteered_extra():
     # A short reply that also volunteers a postcode: anchor + greedy.
     patch = extract_patch("RG1 1AA", asked_question="customer.address.postcode")
     assert patch["customer"]["address"]["postcode"] == "RG1 1AA"
+
+
+# --- Previously-unfillable fields: make / model / datePurchased (the loop bug).
+
+
+def test_make_anchors_from_bare_reply():
+    patch = extract_patch("Ford", asked_question="vehicle.make")
+    assert patch == {"vehicle": {"make": "Ford"}}
+
+
+def test_model_anchors_from_bare_reply():
+    patch = extract_patch("Focus", asked_question="vehicle.model")
+    assert patch == {"vehicle": {"model": "Focus"}}
+
+
+def test_date_purchased_month_and_year():
+    patch = extract_patch("June 2021", asked_question="vehicle.datePurchased")
+    assert patch == {"vehicle": {"datePurchased": {"year": 2021, "month": 6}}}
+
+
+def test_date_purchased_numeric_month_and_year():
+    patch = extract_patch("06/2021", asked_question="vehicle.datePurchased")
+    assert patch == {"vehicle": {"datePurchased": {"year": 2021, "month": 6}}}
+
+
+def test_date_purchased_not_bought_yet():
+    patch = extract_patch("not bought it yet", asked_question="vehicle.datePurchased")
+    assert patch == {"vehicle": {"datePurchased": {"notBoughtYet": True}}}
+
+
+# --- Natural (>3-word) replies still anchor instead of looping.
+
+
+def test_natural_yes_reply_anchors_boolean():
+    patch = extract_patch("yes I am the keeper", asked_question="vehicle.registeredKeeper")
+    assert patch == {"vehicle": {"registeredKeeper": True}}
+
+
+def test_natural_no_reply_anchors_boolean():
+    patch = extract_patch("no it isn't", asked_question="vehicle.modified")
+    assert patch == {"vehicle": {"modified": False}}
+
+
+def test_natural_numeric_reply_anchors_mileage():
+    patch = extract_patch("about 8000 a year", asked_question="vehicle.annualMileage")
+    assert patch == {"vehicle": {"annualMileage": 8000}}

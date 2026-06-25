@@ -63,6 +63,13 @@ def _llm_client():
     return OpenAI()
 
 
+def _autofill() -> bool:
+    """Demo fast-path: when ``MOCK_AUTOFILL=1`` a single chat message completes
+    the quote (fills remaining gaps from a synthetic sample). For frontend
+    iteration — typically set alongside ``MOCK_LLM=1``."""
+    return os.getenv("MOCK_AUTOFILL") == "1"
+
+
 def _vision_client():
     """The OpenAI client used for document (vision) extraction — None in MOCK mode.
 
@@ -131,7 +138,7 @@ async def chat(req: ChatRequest):
         raise HTTPException(status_code=404, detail="Unknown session")
     service = _get_service()
     client = _llm_client()
-    return _sse(collect_turn(req.message, session, service, client=client))
+    return _sse(collect_turn(req.message, session, service, client=client, autofill=_autofill()))
 
 
 @app.post("/resolve")

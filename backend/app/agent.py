@@ -25,7 +25,7 @@ from typing import Optional
 
 from app.conflict import KEEP_CURRENT, reconcile, resolve_conflict
 from app.extraction import extract_patch
-from app.quote_session_client import deep_merge
+from app.quote_session_client import deep_merge, gap_fill_patch
 
 # Human-readable label + the question string (== the anchor dot-path) for each
 # mandatory field, so the agent can ask the next gap and anchor the next reply.
@@ -128,11 +128,15 @@ def next_question(missing: list[str]) -> Optional[str]:
     return missing[0]
 
 
-async def collect_turn(message: str, session: dict, service, client=None):
+async def collect_turn(message: str, session: dict, service, client=None, autofill=False):
     """Drive one customer turn against ``service``, yielding event dicts.
 
     ``session`` (mutable) holds: quoteId, sessionId (platform), current (the
     backend's merged quote copy), asked_question, pending_conflicts.
+
+    ``autofill`` (the ``MOCK_AUTOFILL`` demo fast-path): after applying whatever
+    the customer said, fill any remaining gaps from a complete synthetic sample
+    so the quote is ready to price in a single turn — for frontend iteration.
     """
     quote_id = session["quoteId"]
     platform_session = session["sessionId"]
@@ -181,6 +185,18 @@ async def collect_turn(message: str, session: dict, service, client=None):
     session["pending_conflicts"] = []
     missing = (state or {}).get("missingFields", [])
     journey = (state or {}).get("journeyState")
+
+    # 4b) Demo fast-path (MOCK_AUTOFILL): fill remaining gaps from a complete
+    # synthetic sample so the quote completes in one turn. Gap-fill only — what
+    # the customer actually said is preserved.
+    if autofill and missing:
+        gap = gap_fill_patch(session["current"])
+        if gap:
+            state = await service.update(quote_id, platform_session, gap)
+            deep_merge(session["current"], gap)
+            yield {"type": "echo", "data": "✓ Autofilled remaining details (demo mode)"}
+            missing = (state or {}).get("missingFields", [])
+            journey = (state or {}).get("journeyState")
 
     # 5) Ready, or ask the next still-missing field (§4.1, §6).
     if journey == "ready_to_price" or not missing:

@@ -36,25 +36,89 @@ from typing import Optional
 # Each entry: (caster, regex-or-None). caster turns a raw token into a value.
 
 
+# First number anywhere in the string (tolerant of surrounding words like
+# "about 8000 a year"), with thousands separators stripped.
+_NUMBER_RE = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+
+
+def _first_number(raw: str) -> Optional[str]:
+    m = _NUMBER_RE.search(str(raw).replace("£", ""))
+    return m.group(0).replace(",", "") if m else None
+
+
 def _to_int(raw: str):
-    return int(round(float(str(raw).replace(",", "").strip())))
+    num = _first_number(raw)
+    if num is None:
+        return None
+    return int(round(float(num)))
 
 
 def _to_float(raw: str):
-    return float(str(raw).replace(",", "").replace("£", "").strip())
+    num = _first_number(raw)
+    if num is None:
+        return None
+    return float(num)
 
 
 def _to_str(raw: str):
     return str(raw).strip()
 
 
+# Affirmative / negative word forms, matched as whole words anywhere in a reply
+# so natural answers ("yes I am", "nope, it's not") still anchor (brief §4.2).
+_YES_RE = re.compile(r"\b(yes|yeah|yep|yup|true|correct|i am|i do|i have)\b", re.IGNORECASE)
+_NO_RE = re.compile(r"\b(no|nope|nah|not|false|don'?t|haven'?t)\b", re.IGNORECASE)
+
+
 def _to_bool(raw: str):
     t = str(raw).strip().lower()
-    if t in ("yes", "y", "true", "1"):
+    if t in ("y", "1"):
         return True
-    if t in ("no", "n", "false", "0"):
+    if t in ("n", "0"):
         return False
+    # Word-search so a longer natural reply still resolves; "no/not" wins ties
+    # only when "yes" is absent (a bare "no" must not be read as affirmative).
+    if _NO_RE.search(t) and not _YES_RE.search(t):
+        return False
+    if _YES_RE.search(t):
+        return True
     return None
+
+
+# Month names/abbreviations → number, for the datePurchased free-form parse.
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _to_date_purchased(raw: str):
+    """Parse "month and year, or not bought yet" into the model's shape.
+
+    Returns ``{"notBoughtYet": True}``, ``{"month": int, "year": int}``,
+    ``{"year": int}``, or ``None`` if nothing usable is stated (never invent —
+    brief §17.2). A non-empty dict counts the field as present.
+    """
+    t = str(raw).strip().lower()
+    if not t:
+        return None
+    if "not" in t or "haven" in t or "yet" in t or "no" == t:
+        return {"notBoughtYet": True}
+    year_m = re.search(r"\b(19|20)\d{2}\b", t)
+    if not year_m:
+        return None
+    result: dict = {"year": int(year_m.group(0))}
+    for name, num in _MONTHS.items():
+        if name in t:
+            result["month"] = num
+            break
+    else:
+        # No month name — accept a leading numeric month like "06/2021" or "6 2021".
+        # Anchored at the start, so a year-only string ("2021") never matches here.
+        month_m = re.match(r"(1[0-2]|0?[1-9])\b", t)
+        if month_m:
+            result["month"] = int(month_m.group(1))
+    return result
 
 
 # Per-field caster for an anchored bare reply, by dot-path.
@@ -62,6 +126,9 @@ _FIELD_CASTER = {
     "vehicle.annualMileage": _to_int,
     "vehicle.value": _to_float,
     "vehicle.registration": lambda r: _to_str(r).upper().replace(" ", ""),
+    "vehicle.make": _to_str,
+    "vehicle.model": _to_str,
+    "vehicle.datePurchased": _to_date_purchased,
     "vehicle.useOfVehicle": _to_str,
     "vehicle.security": _to_str,
     "vehicle.dashcam": _to_bool,
@@ -110,11 +177,6 @@ def _set_path(patch: dict, path: str, value) -> None:
     for part in parts[:-1]:
         node = node.setdefault(part, {})
     node[parts[-1]] = value
-
-
-def _looks_bare(message: str) -> bool:
-    """A short reply with no extra labelled facts — the anchor case (brief §17.1)."""
-    return len(message.strip().split()) <= 3
 
 
 # --- Greedy labelled / shaped regex extractors over the whole model. Each maps a
@@ -199,15 +261,25 @@ def _anchor_bare(message: str, asked_question: Optional[str]) -> dict:
     return patch
 
 
+def _field_absent(patch: dict, path: str) -> bool:
+    """True if ``path`` was not captured by greedy extraction (mirrors
+    ``_set_path_missing`` but reads from a built patch)."""
+    return _set_path_missing(patch, path)
+
+
 def _mock_extract(message: str, asked_question: Optional[str]) -> dict:
-    """Deterministic offline extraction: anchored bare reply + greedy regex."""
+    """Deterministic offline extraction: anchored reply + greedy regex.
+
+    The anchor is attempted whenever the asked field wasn't already captured by
+    greedy — not just for bare replies — so a natural answer ("yes I am", "about
+    8000 a year", "June 2021") still fills the asked field instead of looping
+    (brief §4.2). It only sets the asked path, so greedy's other fields win and
+    the §17.1 gotcha ("8000"→mileage when mileage was asked) is preserved.
+    """
     greedy = _greedy_extract(message)
-    # If the reply is bare and we have an anchor, route it to the asked field —
-    # this is what stops "8000" → vehicle.value (the §17.1 gotcha).
-    if _looks_bare(message) and asked_question:
+    if asked_question and _field_absent(greedy, asked_question):
         anchored = _anchor_bare(message, asked_question)
         if anchored:
-            # The anchor wins for a bare reply; merge it over any loose greedy hit.
             return _deep_update(greedy, anchored)
     return greedy
 

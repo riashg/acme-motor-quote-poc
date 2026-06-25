@@ -49,6 +49,11 @@ MOCK_LLM=1 QUOTE_SERVICE=platform PLATFORM_URL=http://localhost:8070 \
   uv run uvicorn app.main:app --port 8000
 ```
 
+> **Frontend dev shortcut:** add `MOCK_AUTOFILL=1` to the backend command to skip
+> collection — any single chat message fills the remaining fields from a synthetic
+> sample and the quote becomes ready to price in one turn. For iterating on the UI
+> without answering every question. Omit it to exercise real collection.
+
 **3) Frontend (React, :5173):**
 ```bash
 cd frontend
