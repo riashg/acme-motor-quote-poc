@@ -190,3 +190,16 @@ def test_display_quote_card_emits_structured_content():
     content, structured = asyncio.run(server.mcp.call_tool("display_quote_card", {}))
     assert structured["outcome"] == "quote"
     assert structured["annualPremium"] == 430.0
+
+
+def test_price_motor_quote_links_to_ui_resource():
+    # The real flow renders the same widget: price_motor_quote carries the UI link.
+    tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
+    assert tools["price_motor_quote"].meta == {"ui": {"resourceUri": server._QUOTE_CARD_URI}}
+
+
+def test_price_motor_quote_emits_structured_content(fake):
+    # Live pricing reaches the widget via structuredContent (fake platform here).
+    content, structured = asyncio.run(server.mcp.call_tool("price_motor_quote", {"quote_id": "q-1", "session_id": "s-1"}))
+    assert structured["outcome"] == "quote"
+    assert structured["annualPremium"] == 612.50

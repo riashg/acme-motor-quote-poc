@@ -95,6 +95,29 @@
         text: "Illustrative demo — mock data only, not a real or binding ACME quote."
       });
 
+      // Not-ready variant: price_motor_quote returns an error dict with the
+      // still-missing fields when the quote isn't complete yet.
+      var notReady = pricing.error || (pricing.missingFields && pricing.annualPremium === undefined);
+      if (notReady) {
+        var card = el("div", { class: "card decline" });
+        card.appendChild(el("div", { class: "brand decline", text: "Quote not ready yet" }));
+        var missing = pricing.missingFields || [];
+        card.appendChild(el("div", {
+          class: "explain",
+          text: missing.length
+            ? "Still need " + missing.length + " more detail(s) before we can price this."
+            : "We need a few more details before we can price this."
+        }));
+        if (missing.length) {
+          var ul = el("ul", { class: "reasons" });
+          missing.slice(0, 8).forEach(function (f) { ul.appendChild(el("li", { text: f })); });
+          card.appendChild(ul);
+        }
+        card.appendChild(disclaimer);
+        root.appendChild(card);
+        return;
+      }
+
       // Refer / decline variant.
       if (pricing.outcome && pricing.outcome !== "quote") {
         var card = el("div", { class: "card decline" });
@@ -184,6 +207,16 @@
       window.parent.postMessage({ jsonrpc: "2.0", id: rpcId, method: method, params: params || {} }, "*");
     }
 
+    function renderLoading() {
+      var root = document.getElementById("root");
+      root.innerHTML = "";
+      var card = el("div", { class: "card" });
+      card.appendChild(el("div", { class: "brand", text: "ACME Motor Quote" }));
+      card.appendChild(el("div", { class: "explain", text: "Loading your quote…" }));
+      root.appendChild(card);
+    }
+
+    var gotData = false;
     window.addEventListener("message", function (event) {
       var msg = event.data;
       if (!msg || msg.jsonrpc !== "2.0") return;
@@ -194,13 +227,21 @@
       }
       if (msg.method === "ui/notifications/tool-result") {
         var pricing = pricingFromToolResult(msg.params);
-        if (pricing) render(pricing);
+        if (pricing) { gotData = true; render(pricing); }
       }
     });
 
-    // Render the mock first (instant, host-independent), then begin the handshake.
-    render(MOCK_QUOTE);
-    requestParent("ui/initialize", {});
+    // Standalone (opened directly): render the mock card as a preview. Embedded
+    // in a host: show a neutral "Loading…" and wait for the real tool-result —
+    // so the real flow never flashes a mock premium — falling back to the mock
+    // only if no data arrives, so a host never shows a dead widget.
+    if (window.parent === window) {
+      render(MOCK_QUOTE);
+    } else {
+      renderLoading();
+      requestParent("ui/initialize", {});
+      setTimeout(function () { if (!gotData) render(MOCK_QUOTE); }, 2000);
+    }
   </script>
 </body>
 </html>

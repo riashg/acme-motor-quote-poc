@@ -133,7 +133,7 @@ def update_motor_quote(quote_id: str, session_id: str, patch: dict) -> dict:
     return _platform.update_quote(quote_id, session_id, patch)
 
 
-def price_motor_quote(quote_id: str, session_id: str) -> dict:
+def price_motor_quote(quote_id: str, session_id: str) -> dict[str, Any]:
     """Price a completed quote and return the pricing object.
 
     Returns the platform's pricing (annualPremium, monthly, excesses, ncdYears,
@@ -141,6 +141,10 @@ def price_motor_quote(quote_id: str, session_id: str) -> dict:
     returns an error dict with missingFields instead of raising — surface that
     and collect the missing fields. Never invent a premium or outcome; they come
     only from this tool. Requires the matching sessionId.
+
+    The ``dict[str, Any]`` return makes FastMCP emit ``structuredContent`` so the
+    linked quote-card UI widget renders the priced quote (or the not-ready /
+    refer / decline state) in a capable host.
     """
     return _platform.price(quote_id, session_id)
 
@@ -230,7 +234,10 @@ mcp.tool(
         destructiveHint=False,
         idempotentHint=True,
         openWorldHint=True,
-    )
+    ),
+    # Render the priced quote in the quote-card UI widget (MCP Apps): when the
+    # quote is complete this shows the live premium; otherwise the not-ready state.
+    meta={"ui": {"resourceUri": _QUOTE_CARD_URI}},
 )(price_motor_quote)
 mcp.tool(
     annotations=ToolAnnotations(
