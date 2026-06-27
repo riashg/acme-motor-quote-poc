@@ -19,6 +19,9 @@ premiums, cover or outcomes.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +83,7 @@ _platform = PlatformClient()
 # is host-agnostic and talks raw JSON-RPC over postMessage (no SDK dependency).
 _UI_MIME = "text/html;profile=mcp-app"  # ext-apps RESOURCE_MIME_TYPE
 _QUOTE_CARD_URI = "ui://acme-motor-quote/quote-card.html"
+_DOC_UPLOAD_URI = "ui://acme-motor-quote/document-upload.html"
 _WIDGETS_DIR = Path(__file__).parent / "widgets"
 
 # A clean £430 sample quote (base £350 + comprehensive £80) — the same shape the
@@ -105,6 +109,64 @@ _MOCK_PRICING = {
 def _load_widget(name: str) -> str:
     """Read a widget's HTML from app/widgets (per-call, so edits show live)."""
     return (_WIDGETS_DIR / name).read_text(encoding="utf-8")
+
+
+# --- Mock document extraction (mirrors backend/app/documents.py canned patches) ---
+# The MCP server is LLM-free; real extraction (vision) lives in the Python
+# backend. For the upload widget demo, we return the same fixture-consistent
+# patches deterministically, routed by filename + instruction.
+_NAMED_DRIVER_RE = re.compile(r"\bnamed\s+driver\b|\badd\b.*\bdriver\b", re.IGNORECASE)
+_LICENCE_HINTS = ("licence", "license", "driving", "dvla")
+
+
+def _is_named_driver(instruction: str | None) -> bool:
+    return bool(instruction and _NAMED_DRIVER_RE.search(instruction))
+
+
+def _doc_type(filename: str) -> str:
+    """Infer 'licence' | 'renewal' from the filename (renewal is the default)."""
+    name = (filename or "").lower()
+    return "licence" if any(h in name for h in _LICENCE_HINTS) else "renewal"
+
+
+def _mock_renewal_patch() -> dict:
+    return {
+        "vehicle": {"registration": "FX19ZTC", "make": "Ford", "model": "Focus", "value": 12000},
+        "cover": {"coverLevel": "Comprehensive", "voluntaryExcess": 250},
+        "driver": {"ncdYears": 5},
+        "history": {"claimsLast3Years": 0, "offencesLast5Years": 0},
+    }
+
+
+def _mock_licence_applicant_patch() -> dict:
+    return {
+        "customer": {
+            "title": "Mr", "firstName": "Sam", "surname": "Sample",
+            "dateOfBirth": "1990-01-01",
+            "address": {"houseNumberOrName": "10", "postcode": "RG1 1AA"},
+        },
+        "driver": {"licenceType": "Full UK", "licenceHeldFor": 15},
+    }
+
+
+def _mock_licence_named_driver_patch() -> dict:
+    return {
+        "title": "Mr", "firstName": "Sam", "surname": "Sample",
+        "dateOfBirth": "1990-01-01", "relationshipToPolicyholder": "Partner",
+        "licenceType": "Full UK", "licenceHeldFor": 15,
+    }
+
+
+def _flatten_paths(patch: dict, prefix: str = "") -> list[str]:
+    """Dot-paths of every leaf in a nested patch (lists are leaves)."""
+    out: list[str] = []
+    for key, value in (patch or {}).items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.extend(_flatten_paths(value, path))
+        else:
+            out.append(path)
+    return out
 
 
 def start_motor_quote() -> dict:
@@ -204,6 +266,115 @@ def quote_card_widget() -> str:
     return _load_widget("quote_card.html")
 
 
+def open_document_upload(
+    quote_id: str | None = None, session_id: str | None = None
+) -> dict[str, Any]:
+    """Open the document-upload widget to attach a policy, renewal or licence.
+
+    Renders the upload UI (linked via ``_meta.ui.resourceUri``). Any quoteId /
+    sessionId are passed through as structured output so the widget can forward
+    them to ``extract_document`` and apply the result to the right quote.
+    """
+    return {
+        "quoteId": quote_id,
+        "sessionId": session_id,
+        "accepts": ["application/pdf", "image/*"],
+    }
+
+
+def _received_bytes(file_base64: str | None) -> int:
+    """Decode the uploaded base64 to count the bytes the server received.
+
+    Proves the file physically reached the server. We do NOT parse or persist it
+    (real extraction lives in the backend); the raw bytes are dropped immediately.
+    """
+    if not file_base64:
+        return 0
+    try:
+        return len(base64.b64decode(file_base64, validate=False))
+    except (binascii.Error, ValueError):
+        return 0
+
+
+def extract_document(
+    filename: str,
+    instruction: str = "",
+    file_base64: str | None = None,
+    content_type: str | None = None,
+    quote_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Extract a quote patch from an uploaded document and report what was found.
+
+    The widget uploads the file as base64 in ``file_base64``; the server decodes
+    it to confirm receipt (``receivedBytes``) but does NOT parse or store it —
+    real vision extraction lives in the conversation backend. The returned patch
+    is MOCK, routed on ``filename`` (licence vs renewal/policy) and ``instruction``
+    (a "named driver" request). When a ``quote_id``/``session_id`` is given, the
+    patch is applied to the platform (named drivers are appended, never
+    overwriting the applicant) and the recomputed ``missingFields``/
+    ``journeyState`` are returned. Mock data only.
+    """
+    received = _received_bytes(file_base64)
+    named = _is_named_driver(instruction)
+
+    if _doc_type(filename) == "licence" and named:
+        person = _mock_licence_named_driver_patch()
+        result: dict[str, Any] = {
+            "filename": filename,
+            "contentType": content_type,
+            "receivedBytes": received,
+            "extracted": _flatten_paths(person),
+            "patch": {"namedDrivers": [person]},
+            "applied": [],
+            "target": "named_driver",
+            "echo": f"✓ Added named driver {person['firstName']} {person['surname']}",
+            "missingFields": [],
+            "journeyState": None,
+        }
+        if quote_id and session_id:
+            current = _platform.get_quote(quote_id, session_id) or {}
+            drivers = list(current.get("namedDrivers", []))
+            drivers.append(person)
+            state = _platform.update_quote(quote_id, session_id, {"namedDrivers": drivers})
+            result["applied"] = ["namedDrivers[]"]
+            result["missingFields"] = state.get("missingFields", [])
+            result["journeyState"] = state.get("journeyState")
+        return result
+
+    patch = _mock_licence_applicant_patch() if _doc_type(filename) == "licence" else _mock_renewal_patch()
+    paths = _flatten_paths(patch)
+    result = {
+        "filename": filename,
+        "contentType": content_type,
+        "receivedBytes": received,
+        "extracted": paths,
+        "patch": patch,
+        "applied": [],
+        "target": "applicant",
+        "echo": "✓ " + ", ".join(paths[:2]) + (f", +{len(paths) - 2} more" if len(paths) > 2 else ""),
+        "missingFields": [],
+        "journeyState": None,
+    }
+    if quote_id and session_id:
+        state = _platform.update_quote(quote_id, session_id, patch)
+        result["applied"] = paths
+        result["missingFields"] = state.get("missingFields", [])
+        result["journeyState"] = state.get("journeyState")
+    return result
+
+
+@mcp.resource(
+    _DOC_UPLOAD_URI,
+    name="document-upload",
+    title="ACME document upload",
+    mime_type=_UI_MIME,
+)
+def document_upload_widget() -> str:
+    """The HTML for the document-upload UI widget (MCP Apps UI resource)."""
+    return _load_widget("document_upload.html")
+
+
 # Register tools with Apps-SDK annotations. Reads are read-only; start/update
 # change state (non-read-only). start/lookups reach beyond the closed model
 # (the platform / vendor seam), so they are open-world.
@@ -273,6 +444,23 @@ mcp.tool(
     annotations=ToolAnnotations(title="Display quote card", readOnlyHint=True),
     meta={"ui": {"resourceUri": _QUOTE_CARD_URI}},
 )(display_quote_card)
+# Launcher for the document-upload widget (carries the UI link); the widget then
+# calls extract_document to do the work.
+mcp.tool(
+    annotations=ToolAnnotations(title="Open document upload", readOnlyHint=True),
+    meta={"ui": {"resourceUri": _DOC_UPLOAD_URI}},
+)(open_document_upload)
+# Mock document extraction; applies to the quote when a session is supplied. Not
+# read-only (it can mutate quote state via the platform).
+mcp.tool(
+    annotations=ToolAnnotations(
+        title="Extract document",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+)(extract_document)
 
 
 def main() -> None:

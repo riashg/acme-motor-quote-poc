@@ -71,7 +71,11 @@ PLATFORM_URL=http://localhost:8070 uv run python -m app.server   # streamable-HT
 ```
 The web app talks to the platform directly; the MCP is what a ChatGPT app connects to.
 
-The MCP server also exposes an **MCP Apps UI widget** ([ext-apps](https://github.com/modelcontextprotocol/ext-apps) spec): a `display_quote_card` demo tool linked to the `ui://acme-motor-quote/quote-card.html` resource, so an ext-apps-aware host renders a styled quote card (mock data) instead of raw JSON. The card also reads live pricing if the host pushes a `ui/notifications/tool-result`. Open `mcp-server/app/widgets/quote_card.html` in a browser to preview it standalone.
+The MCP server also exposes **MCP Apps UI widgets** ([ext-apps](https://github.com/modelcontextprotocol/ext-apps) spec), so an ext-apps-aware host renders styled UI instead of raw JSON:
+- **Quote card** (`ui://acme-motor-quote/quote-card.html`): `price_motor_quote` (real flow — live priced quote once all details are in, or a "not ready" state) and a `display_quote_card` demo tool (mock data) both link to it via `_meta.ui.resourceUri`.
+- **Document upload** (`ui://acme-motor-quote/document-upload.html`): `open_document_upload` (launcher) renders a file picker; the widget base64-uploads the file to `extract_document`, which decodes it to confirm receipt (`receivedBytes`) but does not parse it — extraction is mock (licence/renewal/named-driver patches, routed on filename, applied to the quote when a session is supplied). After extraction the widget reports the captured fields to the model via `ui/message`.
+
+Each widget is self-contained HTML over a zero-dependency `postMessage` bridge — open the files under `mcp-server/app/widgets/` in a browser to preview them standalone.
 
 **Live LLM mode:** set `OPENAI_API_KEY` and omit `MOCK_LLM` (backend uses OpenAI for extraction/collection; vision for documents).
 

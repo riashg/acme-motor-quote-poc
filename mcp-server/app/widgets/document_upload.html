@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>ACME Document Upload</title>
+  <style>
+    :root {
+      --acme-blue: #16357a;
+      --acme-red: #c0392b;
+      --acme-green: #1f8a4c;
+      --acme-card: #ffffff;
+      --acme-border: #e0e0ef;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1a1a1a;
+      background: transparent;
+    }
+    .card {
+      background: var(--acme-card);
+      border: 1px solid var(--acme-border);
+      border-left: 6px solid var(--acme-blue);
+      border-radius: 10px;
+      padding: 16px;
+      margin: 8px 0;
+      max-width: 460px;
+    }
+    .brand { color: var(--acme-blue); font-weight: 700; margin-bottom: 10px; }
+    .dropzone {
+      border: 2px dashed var(--acme-border);
+      border-radius: 8px;
+      padding: 22px 14px;
+      text-align: center;
+      font-size: 14px;
+      color: #555;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .dropzone.dragover { border-color: var(--acme-blue); background: #f3f6ff; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #f3f6ff;
+      border: 1px solid var(--acme-border);
+      border-radius: 16px;
+      padding: 4px 12px;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .chip button {
+      border: 0; background: transparent; cursor: pointer;
+      font-size: 15px; line-height: 1; color: #777; padding: 0;
+    }
+    .instruction {
+      width: 100%;
+      margin-top: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--acme-border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .btn {
+      background: var(--acme-blue); color: #fff; border: 0; border-radius: 8px;
+      padding: 10px 18px; font-weight: 700; margin-top: 12px; cursor: pointer;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .section-label { font-size: 12px; font-weight: 700; opacity: 0.5; margin: 12px 0 4px; }
+    .field { font-size: 13px; margin: 2px 0; }
+    .field code { background: #f3f6ff; padding: 1px 5px; border-radius: 4px; }
+    .ok { color: var(--acme-green); font-weight: 700; }
+    .target { font-size: 13px; margin-top: 8px; }
+    .error { color: var(--acme-red); font-size: 13px; margin-top: 8px; }
+    .disclaimer { font-size: 11px; opacity: 0.6; margin-top: 12px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">ACME — Upload a document</div>
+    <div id="composer">
+      <div class="dropzone" id="dropzone">
+        Drop a policy, renewal or driving licence here, or <strong>browse</strong>.
+        <div style="font-size:12px;opacity:0.6;margin-top:4px;">PDF or image</div>
+      </div>
+      <input type="file" id="file-input" accept=".pdf,image/*" class="hidden" />
+      <div id="chip-host"></div>
+      <input type="text" id="instruction" class="instruction"
+             placeholder="Optional instruction — e.g. add this licence as a named driver" />
+      <button class="btn" id="upload-btn" disabled>Upload</button>
+    </div>
+    <div id="result"></div>
+    <div class="disclaimer">
+      Illustrative demo — mock extraction only, no real document is parsed or stored.
+    </div>
+  </div>
+
+  <script>
+    var staged = null;          // the staged File
+    var session = { quoteId: null, sessionId: null };
+
+    var dropzone = document.getElementById("dropzone");
+    var fileInput = document.getElementById("file-input");
+    var chipHost = document.getElementById("chip-host");
+    var instruction = document.getElementById("instruction");
+    var uploadBtn = document.getElementById("upload-btn");
+    var resultEl = document.getElementById("result");
+
+    function el(tag, attrs, children) {
+      var node = document.createElement(tag);
+      attrs = attrs || {};
+      Object.keys(attrs).forEach(function (k) {
+        if (k === "class") node.className = attrs[k];
+        else if (k === "text") node.textContent = attrs[k];
+        else if (k === "html") node.innerHTML = attrs[k];
+        else node.setAttribute(k, attrs[k]);
+      });
+      (children || []).forEach(function (c) { node.appendChild(c); });
+      return node;
+    }
+
+    function humanSize(bytes) {
+      if (bytes < 1024) return bytes + " B";
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+      return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+    }
+
+    function stage(file) {
+      staged = file;
+      chipHost.innerHTML = "";
+      if (file) {
+        var remove = el("button", { text: "✕", title: "Remove" });
+        remove.addEventListener("click", function () { stage(null); });
+        chipHost.appendChild(el("div", { class: "chip" }, [
+          el("span", { text: "📎 " + file.name + " · " + humanSize(file.size) }),
+          remove
+        ]));
+      }
+      uploadBtn.disabled = !file;
+    }
+
+    dropzone.addEventListener("click", function () { fileInput.click(); });
+    fileInput.addEventListener("change", function (e) {
+      if (e.target.files && e.target.files[0]) stage(e.target.files[0]);
+    });
+    ["dragenter", "dragover"].forEach(function (ev) {
+      dropzone.addEventListener(ev, function (e) {
+        e.preventDefault(); dropzone.classList.add("dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      dropzone.addEventListener(ev, function (e) {
+        e.preventDefault(); dropzone.classList.remove("dragover");
+      });
+    });
+    dropzone.addEventListener("drop", function (e) {
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) stage(e.dataTransfer.files[0]);
+    });
+
+    // --- Host bridge (MCP Apps, spec 2026-01-26). Raw JSON-RPC over postMessage,
+    // no SDK dependency. Unlike the quote-card widget (which only receives
+    // notifications), this view CALLS a tool — so we correlate request ids to
+    // responses. With no host (standalone), callTool rejects and we fall back to
+    // a client-side mock so the demo always shows a result.
+    var rpcId = 0;
+    var pending = {};  // id -> {resolve, reject}
+
+    function notifyParent(method, params) {
+      if (window.parent === window) return;
+      window.parent.postMessage({ jsonrpc: "2.0", method: method, params: params || {} }, "*");
+    }
+    function requestParent(method, params) {
+      rpcId += 1;
+      var id = rpcId;
+      if (window.parent === window) return Promise.reject(new Error("no host"));
+      window.parent.postMessage({ jsonrpc: "2.0", id: id, method: method, params: params || {} }, "*");
+      return new Promise(function (resolve, reject) {
+        pending[id] = { resolve: resolve, reject: reject };
+        setTimeout(function () {
+          if (pending[id]) { delete pending[id]; reject(new Error("timeout")); }
+        }, 8000);
+      });
+    }
+    function callTool(name, args) {
+      return requestParent("tools/call", { name: name, arguments: args || {} })
+        .then(function (result) {
+          // CallToolResult: prefer structuredContent, else first text block JSON.
+          if (result && result.structuredContent) return result.structuredContent;
+          if (result && result.content) {
+            var t = result.content.find(function (c) { return c.type === "text"; });
+            if (t) { try { return JSON.parse(t.text); } catch (e) { /* fall through */ } }
+          }
+          return result;
+        });
+    }
+
+    // Make the extraction visible to the MODEL. A tool the *view* calls returns
+    // its result only to this iframe — the model never sees it. ui/update-model-
+    // context offloads the data to the host's model context (attached on the
+    // next user turn, no forced response) so the assistant can answer
+    // "what was extracted?". Best-effort: rejects with no host / unsupported.
+    function updateModelContext(text, structured) {
+      return requestParent("ui/update-model-context", {
+        content: [{ type: "text", text: text }],
+        structuredContent: structured
+      });
+    }
+
+    // Proactively tell the assistant what was captured (a visible chat turn).
+    // updateModelContext above is the "clean" structured channel, but not every
+    // host surfaces it to the model — so we carry the extracted values IN the
+    // message text itself, which is the reliable path. Best-effort: no host.
+    function announceToModel(res) {
+      var pairs = patchPairs(res.patch || {});
+      var what = res.target === "named_driver" ? "a driving licence to add a named driver" : "a document";
+      var sizeNote = res.receivedBytes ? " (" + res.receivedBytes + " bytes received by the server)" : "";
+      var lines = ["I've uploaded " + what + sizeNote + ". The widget extracted these fields:"]
+        .concat(pairs.map(function (p) { return "- " + p; }));
+      if (res.missingFields && res.missingFields.length) {
+        lines.push("Still missing " + res.missingFields.length + " field(s): " +
+          res.missingFields.join(", ") + ".");
+      }
+      lines.push("Please confirm what was captured and flag anything that looks wrong.");
+      return requestParent("ui/message", {
+        role: "user",
+        content: [{ type: "text", text: lines.join("\n") }]
+      });
+    }
+
+    window.addEventListener("message", function (event) {
+      var msg = event.data;
+      if (!msg || msg.jsonrpc !== "2.0") return;
+      // Response to one of our requests (ui/initialize or tools/call).
+      if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+        var p = pending[msg.id];
+        if (p) {
+          delete pending[msg.id];
+          if (msg.error) p.reject(new Error(msg.error.message || "tool error"));
+          else p.resolve(msg.result);
+        }
+        return;
+      }
+      // Launcher tool's structuredContent may carry the session to forward.
+      if (msg.method === "ui/notifications/tool-result" && msg.params) {
+        var data = msg.params.structuredContent ||
+          (msg.params.result && msg.params.result.structuredContent);
+        if (data) {
+          if (data.quoteId) session.quoteId = data.quoteId;
+          if (data.sessionId) session.sessionId = data.sessionId;
+        }
+      }
+    });
+
+    function flattenPaths(patch, prefix) {
+      var out = [];
+      Object.keys(patch || {}).forEach(function (k) {
+        var path = prefix ? prefix + "." + k : k;
+        var v = patch[k];
+        if (v && typeof v === "object" && !Array.isArray(v)) out = out.concat(flattenPaths(v, path));
+        else out.push(path);
+      });
+      return out;
+    }
+
+    // Client-side mock — mirrors the server's MOCK extraction so a standalone
+    // preview (or a host that won't route the tool call) still shows a result.
+    function mockResult(filename, instr, size) {
+      var named = /\bnamed\s+driver\b|\badd\b.*\bdriver\b/i.test(instr || "");
+      var isLicence = /licen[cs]e|driving|dvla/i.test(filename || "");
+      var base = { applied: [], missingFields: [], journeyState: null, receivedBytes: size || 0 };
+      if (isLicence && named) {
+        var p = { title: "Mr", firstName: "Sam", surname: "Sample", dateOfBirth: "1990-01-01",
+                  relationshipToPolicyholder: "Partner", licenceType: "Full UK", licenceHeldFor: 15 };
+        return Object.assign(base, { patch: { namedDrivers: [p] }, extracted: flattenPaths(p),
+                 target: "named_driver", echo: "✓ Added named driver Sam Sample" });
+      }
+      if (isLicence) {
+        var p2 = { customer: { title: "Mr", firstName: "Sam", surname: "Sample",
+                   dateOfBirth: "1990-01-01", address: { houseNumberOrName: "10", postcode: "RG1 1AA" } },
+                   driver: { licenceType: "Full UK", licenceHeldFor: 15 } };
+        return Object.assign(base, { patch: p2, extracted: flattenPaths(p2),
+                 target: "applicant", echo: "✓ Title Mr, First name Sam, +4 more" });
+      }
+      var p3 = { vehicle: { registration: "FX19ZTC", make: "Ford", model: "Focus", value: 12000 },
+                 cover: { coverLevel: "Comprehensive", voluntaryExcess: 250 },
+                 driver: { ncdYears: 5 }, history: { claimsLast3Years: 0, offencesLast5Years: 0 } };
+      return Object.assign(base, { patch: p3, extracted: flattenPaths(p3),
+               target: "applicant", echo: "✓ Registration FX19ZTC, Make Ford, +7 more" });
+    }
+
+    // "path: value" lines from the returned patch, for a model-readable summary.
+    function patchPairs(patch, prefix) {
+      var out = [];
+      Object.keys(patch || {}).forEach(function (k) {
+        var path = prefix ? prefix + "." + k : k;
+        var v = patch[k];
+        if (Array.isArray(v)) {
+          v.forEach(function (item, i) { out = out.concat(patchPairs(item, path + "[" + i + "]")); });
+        } else if (v && typeof v === "object") {
+          out = out.concat(patchPairs(v, path));
+        } else {
+          out.push(path + ": " + v);
+        }
+      });
+      return out;
+    }
+
+    function shareWithModel(res) {
+      var pairs = patchPairs(res.patch || {});
+      var lines = [
+        "A document was uploaded and extracted (mock).",
+        "Target: " + (res.target === "named_driver" ? "named driver" : "main applicant") + ".",
+        "Applied to the quote: " + (res.applied && res.applied.length ? "yes" : "not yet") + ".",
+        "",
+        "Extracted " + (res.extracted || []).length + " field(s):"
+      ].concat(pairs.map(function (p) { return "- " + p; }));
+      if (res.missingFields && res.missingFields.length) {
+        lines.push("", "Still missing " + res.missingFields.length + " field(s).");
+      }
+      return updateModelContext(lines.join("\n"), res)
+        .then(function () { return true; })
+        .catch(function () { return false; });
+    }
+
+    function renderResult(res, shared) {
+      document.getElementById("composer").classList.add("hidden");
+      resultEl.innerHTML = "";
+      if (res.receivedBytes) {
+        resultEl.appendChild(el("div", { class: "ok", text: "📥 Uploaded " + humanSize(res.receivedBytes) + " to the server" }));
+      }
+      var fields = res.extracted || [];
+      resultEl.appendChild(el("div", { class: "ok", text: "✓ Extracted " + fields.length + " field(s)" }));
+      if (res.echo) resultEl.appendChild(el("div", { class: "field", text: res.echo }));
+      resultEl.appendChild(el("div", {
+        class: "target",
+        text: res.target === "named_driver" ? "Added as a named driver." : "Applied to the main applicant."
+      }));
+      if (fields.length) {
+        resultEl.appendChild(el("div", { class: "section-label", text: "Extracted fields" }));
+        fields.forEach(function (f) {
+          resultEl.appendChild(el("div", { class: "field", html: "<code>" + f + "</code>" }));
+        });
+      }
+      if (res.missingFields && res.missingFields.length) {
+        resultEl.appendChild(el("div", { class: "section-label", text: "Still missing" }));
+        resultEl.appendChild(el("div", { class: "field", text: res.missingFields.length + " field(s) to go." }));
+      }
+      if (shared) {
+        resultEl.appendChild(el("div", { class: "field", text: "↩ Shared with the assistant." }));
+      }
+    }
+
+    var MAX_UPLOAD_BYTES = 8 * 1024 * 1024;  // 8 MB — keep the tool-call payload sane.
+
+    function showError(message) {
+      var existing = document.getElementById("upload-error");
+      if (existing) existing.remove();
+      var node = el("div", { class: "error", id: "upload-error", text: message });
+      document.getElementById("composer").appendChild(node);
+    }
+
+    uploadBtn.addEventListener("click", function () {
+      if (!staged) return;
+      if (staged.size > MAX_UPLOAD_BYTES) {
+        showError("That file is larger than 8 MB — please choose a smaller one.");
+        return;
+      }
+      var filename = staged.name;
+      var instr = instruction.value || "";
+      var contentType = staged.type || "application/octet-stream";
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = "Uploading…";
+
+      // Physically upload the file: read it as base64 and send the bytes to the
+      // MCP server. The server decodes them to confirm receipt (receivedBytes)
+      // but does not parse them — the mock extraction routes on filename.
+      var reader = new FileReader();
+      reader.onloadend = function () {
+        var dataUrl = String(reader.result || "");
+        var base64 = dataUrl.indexOf(",") >= 0 ? dataUrl.slice(dataUrl.indexOf(",") + 1) : "";
+        callTool("extract_document", {
+          filename: filename, instruction: instr,
+          file_base64: base64, content_type: contentType,
+          quote_id: session.quoteId, session_id: session.sessionId
+        }).then(function (res) {
+          // A real result means the host routed the call (we're hosted). Render,
+          // best-effort offload structured context, and send the visible message
+          // carrying the extracted values so the assistant can confirm them.
+          renderResult(res, true);
+          shareWithModel(res).catch(function () { /* host may not support it */ });
+          announceToModel(res).catch(function () { /* host declined the message */ });
+        }).catch(function () {
+          // No host / not routed / timeout → show the client-side mock.
+          renderResult(mockResult(filename, instr, staged.size), false);
+        });
+      };
+      reader.readAsDataURL(staged);
+    });
+
+    // Begin the host handshake (best-effort). On its result, mark initialized.
+    requestParent("ui/initialize", {}).then(function () {
+      notifyParent("ui/notifications/initialized", {});
+    }).catch(function () { /* standalone — fine */ });
+  </script>
+</body>
+</html>

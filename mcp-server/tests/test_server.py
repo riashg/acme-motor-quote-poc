@@ -203,3 +203,93 @@ def test_price_motor_quote_emits_structured_content(fake):
     content, structured = asyncio.run(server.mcp.call_tool("price_motor_quote", {"quote_id": "q-1", "session_id": "s-1"}))
     assert structured["outcome"] == "quote"
     assert structured["annualPremium"] == 612.50
+
+
+# --- MCP Apps document-upload UI widget.
+
+
+def test_document_upload_widget_returns_html():
+    html = server.document_upload_widget()
+    assert "Upload a document" in html
+    # This view CALLS a tool (not just receives notifications)...
+    assert "tools/call" in html
+    # ...pushes the result into the model's context so the assistant sees it...
+    assert "ui/update-model-context" in html
+    # ...and prompts the assistant to confirm the extraction in the chat.
+    assert "ui/message" in html
+
+
+def test_document_upload_resource_registered_with_app_mime():
+    resources = {str(r.uri): r for r in server.mcp._resource_manager.list_resources()}
+    assert server._DOC_UPLOAD_URI in resources
+    assert resources[server._DOC_UPLOAD_URI].mime_type == "text/html;profile=mcp-app"
+
+
+def test_open_document_upload_links_to_ui_resource():
+    tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
+    assert tools["open_document_upload"].meta == {"ui": {"resourceUri": server._DOC_UPLOAD_URI}}
+    assert tools["open_document_upload"].annotations.readOnlyHint is True
+
+
+def test_extract_document_renewal_patch():
+    result = server.extract_document("renewal.pdf")
+    assert result["target"] == "applicant"
+    assert "vehicle.registration" in result["extracted"]
+    assert result["applied"] == []  # no session → not applied
+    # The patch (with values) is returned so the widget can show the model what
+    # was extracted, not just the field names.
+    assert result["patch"]["vehicle"]["registration"] == "FX19ZTC"
+
+
+def test_extract_document_receives_uploaded_bytes():
+    import base64
+    payload = b"%PDF-1.4 fake renewal bytes"
+    b64 = base64.b64encode(payload).decode("ascii")
+    result = server.extract_document("renewal.pdf", file_base64=b64, content_type="application/pdf")
+    # The server decoded the upload to confirm receipt (but does not parse it).
+    assert result["receivedBytes"] == len(payload)
+    assert result["contentType"] == "application/pdf"
+
+
+def test_extract_document_no_upload_is_zero_bytes():
+    result = server.extract_document("renewal.pdf")
+    assert result["receivedBytes"] == 0
+
+
+def test_extract_document_licence_applicant_patch():
+    result = server.extract_document("driving-licence.jpg")
+    assert result["target"] == "applicant"
+    assert "customer.firstName" in result["extracted"]
+    assert "driver.licenceType" in result["extracted"]
+
+
+def test_extract_document_named_driver_routing():
+    result = server.extract_document("licence.jpg", "please add this as a named driver")
+    assert result["target"] == "named_driver"
+    assert "firstName" in result["extracted"]
+    # Flat person shape — not nested under customer (must not touch the applicant).
+    assert "customer.firstName" not in result["extracted"]
+
+
+def test_extract_document_applies_to_quote_when_session_given(fake):
+    result = server.extract_document("renewal.pdf", quote_id="q-1", session_id="s-1")
+    assert result["applied"] == result["extracted"]
+    assert result["journeyState"] == "ready_to_price"
+    assert ("update_quote", "q-1", "s-1", server._mock_renewal_patch()) in fake.calls
+
+
+def test_extract_document_named_driver_appends(fake):
+    result = server.extract_document("licence.jpg", "add as a named driver", quote_id="q-1", session_id="s-1")
+    assert result["applied"] == ["namedDrivers[]"]
+    # Read-modify-write: get the quote, then patch namedDrivers[] (not the applicant).
+    assert ("get_quote", "q-1", "s-1") in fake.calls
+    update_calls = [c for c in fake.calls if c[0] == "update_quote"]
+    assert update_calls and "namedDrivers" in update_calls[0][3]
+
+
+def test_extract_document_emits_structured_content():
+    content, structured = asyncio.run(
+        server.mcp.call_tool("extract_document", {"filename": "renewal.pdf"})
+    )
+    assert structured["target"] == "applicant"
+    assert "vehicle.registration" in structured["extracted"]
